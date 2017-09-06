@@ -1,0 +1,14 @@
+[package]
+name = "elfkit"
+version = "0.1.0"
+authors = ["Arvid E. Picciani <aep@exys.org>"]
+
+[dependencies]
+byteorder = "1"
+enum_primitive = "0"
+num = "0"
+
+
+[dev_dependencies]
+colored = "1"
+
