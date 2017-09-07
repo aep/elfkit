@@ -1,8 +1,8 @@
 extern crate num;
 extern crate byteorder;
 #[macro_use] extern crate enum_primitive;
+#[macro_use] extern crate bitflags;
 #[macro_use] mod read_macros;
-
 pub mod relocation;
 pub mod types;
 pub mod symbol;
@@ -16,7 +16,6 @@ pub enum Error {
     InvalidMagic,
     InvalidFormat,
     UnsupportedFormat,
-    UnsupportedAbi,
 }
 
 impl From<::std::io::Error> for Error {
@@ -31,10 +30,10 @@ pub struct Header {
     pub ident_class:      types::Class,
     pub ident_endianness: types::Endianness,
     pub ident_version:    u8, // 1
-    pub ident_abi:        u8, // 0 for systemv
+    pub ident_abi:        types::Abi,
 
-    pub etype:      u16, // reloc(1), exe(2), shared(3), core(4)
-    pub machine:    u16,
+    pub etype:      types::ElfType,
+    pub machine:    types::Machine,
     pub version:    u32, //1
     pub entry:      u64, //program counter starts here
     pub phoff:      u64, //offset of program header table
@@ -75,13 +74,19 @@ impl Header {
             return Err(Error::UnsupportedFormat);
         }
 
-        r.ident_abi        = b[7];
-        if r.ident_abi != 0x00 {
-            return Err(Error::UnsupportedAbi);
-        }
+        r.ident_abi = match types::Abi::from_u8(b[7]) {
+            Some(v) => v,
+            None => return Err(Error::InvalidFormat),
+        };
 
-        r.etype     = elf_read_u16!(r, io)?;
-        r.machine   = elf_read_u16!(r, io)?;
+        r.etype     = match types::ElfType::from_u16(elf_read_u16!(r, io)?) {
+            Some(v) => v,
+            None => return Err(Error::InvalidFormat),
+        };
+        r.machine   = match types::Machine::from_u16(elf_read_u16!(r, io)?) {
+            Some(v) => v,
+            None => return Err(Error::InvalidFormat),
+        };
         r.version   = elf_read_u32!(r, io)?;
 
         r.entry     = elf_read_uclass!(r, io)?;
@@ -103,7 +108,7 @@ impl Header {
 pub struct Section {
     pub name:       String,
     pub shtype:     types::SectionType,
-    pub flags:      u64,
+    pub flags:      types::SectionFlags,
     pub addr:       u64,
     pub offset:     u64,
     pub size:       u64,
@@ -126,7 +131,10 @@ impl Section {
             Some(v) => v,
             None => return Err(Error::UnsupportedFormat),
         };
-        r.flags     = elf_read_uclass!(eh, br)?;
+        r.flags     = match types::SectionFlags::from_bits(elf_read_uclass!(eh, br)?) {
+            Some(v) => v,
+            None => return Err(Error::UnsupportedFormat),
+        };
         r.addr      = elf_read_uclass!(eh, br)?;
         r.offset    = elf_read_uclass!(eh, br)?;
         r.size      = elf_read_uclass!(eh, br)?;
@@ -138,10 +146,59 @@ impl Section {
     }
 }
 
+
+#[derive(Default, Debug)]
+pub struct Segment {
+    pub phtype: types::SegmentType,
+    pub flags:  u32,
+    pub offset: u64,
+    pub vaddr:  u64,
+    pub paddr:  u64,
+    pub filesz: u64,
+    pub memsz:  u64,
+    pub align:  u64,
+}
+
+impl Segment {
+    pub fn from_reader<R>(io: &mut R, eh: &Header) -> Result<Segment, Error> where R: Read {
+        let mut r = Segment::default();
+        let mut b = vec![0; eh.phentsize as usize];
+        io.read(&mut b)?;
+        let mut br = &b[..];
+
+        r.phtype = match types::SegmentType::from_u32(elf_read_u32!(eh, br)?) {
+            Some(v) => v,
+            None => return Err(Error::UnsupportedFormat),
+        };
+
+        match eh.ident_class  {
+            types::Class::Class64 => {
+                r.flags     = elf_read_u32!(eh, br)?;
+                r.offset    = elf_read_u64!(eh, br)?;
+                r.vaddr     = elf_read_u64!(eh, br)?;
+                r.paddr     = elf_read_u64!(eh, br)?;
+                r.filesz    = elf_read_u64!(eh, br)?;
+                r.memsz     = elf_read_u64!(eh, br)?;
+                r.align     = elf_read_u64!(eh, br)?;
+            },
+            types::Class::Class32 => {
+                r.offset    = elf_read_u32!(eh, br)? as u64;
+                r.vaddr     = elf_read_u32!(eh, br)? as u64;
+                r.paddr     = elf_read_u32!(eh, br)? as u64;
+                r.filesz    = elf_read_u32!(eh, br)? as u64;
+                r.memsz     = elf_read_u32!(eh, br)? as u64;
+                r.align     = elf_read_u32!(eh, br)? as u64;
+            },
+        };
+        Ok(r)
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct Elf {
     pub header:   Header,
     pub sections: Vec<Section>,
+    pub segments: Vec<Segment>,
 
     pub strtab:   String,
 }
@@ -151,8 +208,15 @@ impl Elf {
         let mut r = Elf::default();
         r.header = Header::from_reader(io)?;
 
-        io.seek(SeekFrom::Start(r.header.shoff))?;
+        // parse program
+        io.seek(SeekFrom::Start(r.header.phoff))?;
+        for _ in 0..r.header.phnum {
+            let segment = Segment::from_reader(io, &r.header)?;
+            r.segments.push(segment);
+        }
 
+        // parse sections
+        io.seek(SeekFrom::Start(r.header.shoff))?;
         for _ in 0..r.header.shnum {
             let section = Section::from_reader(io, &r.header)?;
             r.sections.push(section);

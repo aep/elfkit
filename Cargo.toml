@@ -7,6 +7,7 @@ authors = ["Arvid E. Picciani <aep@exys.org>"]
 byteorder = "1"
 enum_primitive = "0"
 num = "0"
+bitflags = "0"
 
 
 [dev_dependencies]

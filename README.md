@@ -9,4 +9,5 @@ cargo run --example readelf ./tests/samples/amd64_exe
 
 references
 ==========
-[https://software.intel.com/sites/default/files/article/402129/mpx-linux64-abi.pdf](X86_64)
+[https://en.wikipedia.org/wiki/Executable_and_Linkable_Format](Executable_and_Linkable_Format)
+[https://software.intel.com/sites/default/files/article/402129/mpx-linux64-abi.pdf](X86_64 Abi)
