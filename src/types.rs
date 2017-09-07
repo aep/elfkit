@@ -42,9 +42,29 @@ impl fmt::Display for SectionFlags {
     }
 }
 
+bitflags! {
+#[derive(Default)]
+    pub struct SegmentFlags: u64 {
+        const X = (1 << 0);
+        const W = (1 << 1);
+        const R = (1 << 2);
+    }
+}
+
+impl fmt::Display for SegmentFlags {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let dstr = format!("{:?}", self);
+        if dstr == "(empty)" {
+            return "".fmt(f);
+        }
+        let dstr = dstr.split("|").map(|s| {s.trim()}).fold(String::new(), |acc, s| acc + s );
+        dstr.fmt(f)
+    }
+}
+
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Primitive, PartialEq)]
+#[derive(Debug, Primitive, PartialEq, Clone)]
 pub enum RelocationType {
     R_X86_64_NONE       = 0, // none none
     R_X86_64_64         = 1, // word64 S + A
@@ -86,7 +106,7 @@ impl Default for RelocationType{
 }
 
 
-#[derive(Debug, Primitive, PartialEq)]
+#[derive(Debug, Primitive, PartialEq, Clone)]
 pub enum Endianness {
     LittleEndian = 1,
     BigEndian    = 2,
@@ -97,7 +117,7 @@ impl Default for Endianness{
 
 
 
-#[derive(Debug, Primitive, PartialEq)]
+#[derive(Debug, Primitive, PartialEq, Clone)]
 pub enum Class {
     Class32 = 1,
     Class64 = 2,
@@ -107,7 +127,7 @@ impl Default for Class {
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Primitive, PartialEq)]
+#[derive(Debug, Primitive, PartialEq, Clone)]
 pub enum SectionType {
     NULL            = 0,    /* Section header table entry unused */
     PROGBITS        = 1,    /* Program data */
@@ -143,7 +163,7 @@ impl Default for SectionType {
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Primitive, PartialEq)]
+#[derive(Debug, Primitive, PartialEq, Clone)]
 pub enum Abi {
     SYSV        = 0,
     HPUX        = 1,
@@ -165,7 +185,7 @@ impl Default for Abi {
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Primitive, PartialEq)]
+#[derive(Debug, Primitive, PartialEq, Clone)]
 pub enum ElfType {
     NONE  = 0,
     REL   = 1,
@@ -178,7 +198,7 @@ impl Default for ElfType {
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Primitive, PartialEq)]
+#[derive(Debug, Primitive, PartialEq, Clone)]
 pub enum SymbolType {
     NOTYPE      = 0,    /* Symbol type is unspecified */
     OBJECT      = 1,    /* Symbol is a data object */
@@ -196,7 +216,7 @@ impl Default for SymbolType {
 
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Primitive, PartialEq)]
+#[derive(Debug, Primitive, PartialEq, Clone)]
 pub enum SymbolBind {
     LOCAL       = 0,    /* Local symbol */
     GLOBAL      = 1,    /* Global symbol */
@@ -209,7 +229,7 @@ impl Default for SymbolBind{
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Primitive, PartialEq)]
+#[derive(Debug, Primitive, PartialEq, Clone)]
 pub enum SymbolVis {
     DEFAULT     = 0,    /* Default symbol visibility rules */
     INTERNAL    = 1,    /* Processor specific hidden class */
@@ -222,7 +242,7 @@ impl Default for SymbolVis{
 
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Primitive, PartialEq)]
+#[derive(Debug, Primitive, PartialEq, Clone)]
 pub enum Machine{
     NONE         = 0,     /* No machine */
     M32          = 1,     /* AT&T WE 32100 */
@@ -409,7 +429,7 @@ impl Default for Machine {
 
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Primitive, PartialEq)]
+#[derive(Debug, Primitive, PartialEq, Clone)]
 pub enum SegmentType {
     NULL            = 0,           /* Program header table entry unused */
     LOAD            = 1,           /* Loadable program segment */

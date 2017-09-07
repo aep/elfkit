@@ -10,6 +10,12 @@ use elfkit::types;
 use std::io::{Read, Seek, SeekFrom};
 use colored::*;
 
+fn hextab<S>(align: usize, s:S) -> String where S: std::fmt::LowerHex {
+    let s   = format!("{:.align$x}", s, align=align);
+    let pad : String = vec!['0'; align - s.len()].into_iter().collect();
+    format!("\x1b[90m{}\x1b[0;m{}", pad, s)
+}
+
 fn main() {
     let filename = env::args().nth(1).unwrap();
     let mut file = File::open(filename).unwrap();
@@ -35,17 +41,18 @@ fn main() {
     println!("  Number of section headers:         {}", elf.header.shnum);
     println!("  Section header string table index: {}", elf.header.shstrndx);
     println!("");
-    println!("{}", "Section Headers:".bold());
+    println!("{} at offset 0x{:x}:", "Section Headers".bold(), elf.header.shoff);
     println!("  [Nr] Name              Type             Address           Offset");
     println!("       Size              EntSize          Flags  Link  Info Align");
 
 
     for (i, section) in elf.sections.iter().enumerate() {
-        println!("  [{:>2}] {:<17.17} {:<16.16} {:0>16.16x}  {:0>8.8x}",
-                 i, section.name.bold(), format!("{:?}", section.shtype), section.addr, section.offset);
+        println!("  [{:>2}] {:<17.17} {:<16.16} {}  {}",
+                 i, section.name.bold(), format!("{:?}", section.shtype),
+                 hextab(16, section.addr), hextab(8, section.offset));
 
-        println!("       {:0>16.16x}  {:0>16.16x} {:<6} {:<5.5} {:<4.4} {:<5.5}",
-                 section.size, section.entsize, section.flags, section.link, section.info, section.addralign);
+        println!("       {}  {} {:<6} {:<5.5} {:<4.4} {:<5.5}",
+                 hextab(16, section.size), hextab(16, section.entsize), section.flags, section.link, section.info, section.addralign);
     }
 
     println!("",);
@@ -59,46 +66,58 @@ fn main() {
   "C".bold(), "o".bold(), "E".bold(), "l".bold(), "p".bold());
 
     println!("");
-    println!("{}", "Program Headers (Segments):".bold());
+    println!("{} at offset 0x{:x}:", "Program Headers (Segments)".bold(), elf.header.phoff);
     println!("  Type           Offset             VirtAddr           PhysAddr");
     println!("                 FileSiz            MemSiz             Flags  Align");
 
     for ph in &elf.segments {
-        println!("  {:<14.14} 0x{:0>16.16x} 0x{:0>16.16x} 0x{:0>16.16x}",
-                 format!("{:?}", ph.phtype), ph.offset, ph.vaddr, ph.paddr);
+        println!("  {:<14.14} 0x{} 0x{} 0x{}",
+                 format!("{:?}", ph.phtype), hextab(16, ph.offset), hextab(16, ph.vaddr), hextab(16, ph.paddr));
 
-        println!("                 0x{:0>16.16x} 0x{:0>16.16x}",
-                 ph.filesz, ph.memsz);
-
+        println!("                 0x{} 0x{} {:<6} 0x{:x}",
+                 hextab(16, ph.filesz), hextab(16, ph.memsz), ph.flags,  ph.align);
     }
 
+    for segment in &elf.segments {
+        match segment.phtype {
+            types::SegmentType::INTERP => {
+                println!("");
+                println!("{} (INTERP) segment at offset 0x{:x}:", "Program interpreter".bold(), segment.offset);
+                file.seek(SeekFrom::Start(segment.offset)).unwrap();
+                let mut b = vec![0;segment.filesz as usize];
+                file.read_exact(&mut b).unwrap();
+                println!("  {}", String::from_utf8_lossy(&b).into_owned().trim());
+            },
+            _ => {}
+        };
+    }
 
     for section in &elf.sections {
         match section.shtype {
             types::SectionType::RELA => {
                 println!("");
-                println!("{} '{}' at offset 0x{:x}:", "Relocations".bold(),
+                println!("{} '{}' section at offset 0x{:x}:", "Relocations".bold(),
                 section.name.bold(), section.offset);
                 println!("  Offset           Type            Symbol           Addend");
 
                 file.seek(SeekFrom::Start(section.offset)).unwrap();
                 let relocs = Relocation::from_reader(&mut(&mut file).take(section.size), &elf.header).unwrap();
                 for reloc in relocs {
-                    println!("  {:0>16.16x} {:<15.15} {:0>16.16x} {:0>16.16x}",
-                             reloc.addr, &format!("{:?}", reloc.rtype)[2..], reloc.sym, reloc.addend);
+                    println!("  {} {:<15.15} {: <16.16x} {: <16.16x}",
+                             hextab(16, reloc.addr), &format!("{:?}", reloc.rtype)[2..], reloc.sym, reloc.addend);
                 }
             },
             types::SectionType::SYMTAB => {
                 println!("");
-                println!("{} '{}' at offset 0x{:x}:", "Symbols".bold(),
+                println!("{} '{}' section at offset 0x{:x}:", "Symbols".bold(),
                 section.name.bold(), section.offset);
-                println!("  Num:    Value          Size Type    Bind   Vis      Ndx Name");
+                println!("  Num: Value             Size Type    Bind   Vis      Ndx Name");
 
                 file.seek(SeekFrom::Start(section.offset)).unwrap();
                 let symbols = Symbol::from_reader(&mut(&mut file).take(section.size), &elf).unwrap();
                 for (i, symbol) in symbols.iter().enumerate() {
-                    println!("  {:>3}: {:0<16.16x} {:>5.5} {:<7.7} {:<6.6} {:<8.8} {:<3.3} {} ", i,
-                             symbol.value, symbol.size,
+                    println!("  {:>3}: {} {:>5.5} {:<7.7} {:<6.6} {:<8.8} {:<3.3} {} ", i,
+                             hextab(16, symbol.value), symbol.size,
                              format!("{:?}", symbol.stype),
                              format!("{:?}", symbol.bind),
                              format!("{:?}", symbol.vis),

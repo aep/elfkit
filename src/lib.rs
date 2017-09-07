@@ -25,7 +25,7 @@ impl From<::std::io::Error> for Error {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct Header {
     pub ident_magic:      [u8;4],
     pub ident_class:      types::Class,
@@ -46,6 +46,29 @@ pub struct Header {
     pub shentsize:  u16, //the size of a section header table entry
     pub shnum:      u16, //the number of entries in the section header table
     pub shstrndx:   u16, //where to find section names
+}
+
+impl Default for Header {
+    fn default() -> Self {Header{
+        ident_magic:      [0x7F,0x45,0x4c, 0x46],
+        ident_class:      types::Class::Class64,
+        ident_endianness: types::Endianness::LittleEndian,
+        ident_version:    1,
+        ident_abi:        types::Abi::SYSV,
+        etype:      types::ElfType::default(),
+        machine:    types::Machine::default(),
+        version:    1,
+        entry:      0,
+        phoff:      0,
+        shoff:      0,
+        flags:      0,
+        ehsize:     0,
+        phentsize:  0,
+        phnum:      0,
+        shentsize:  0,
+        shnum:      0,
+        shstrndx:   0,
+    }}
 }
 
 
@@ -132,10 +155,10 @@ impl Header {
 
     pub fn size(&self) ->  usize {
         16 + 2 + 2 + 4 +
-        match self.ident_class {
-            types::Class::Class32 => 4 + 4 + 4,
-            types::Class::Class64 => 8 + 8 + 8,
-        } + 4 + 2 + 2 +2 +2 +2 +2
+            match self.ident_class {
+                types::Class::Class32 => 4 + 4 + 4,
+                types::Class::Class64 => 8 + 8 + 8,
+            } + 4 + 2 + 2 +2 +2 +2 +2
     }
 }
 
@@ -201,7 +224,7 @@ impl Section {
 #[derive(Default, Debug)]
 pub struct Segment {
     pub phtype: types::SegmentType,
-    pub flags:  u32,
+    pub flags:  types::SegmentFlags,
     pub offset: u64,
     pub vaddr:  u64,
     pub paddr:  u64,
@@ -224,7 +247,7 @@ impl Segment {
 
         match eh.ident_class  {
             types::Class::Class64 => {
-                r.flags     = elf_read_u32!(eh, br)?;
+                r.flags     = types::SegmentFlags::from_bits_truncate(elf_read_u32!(eh, br)? as u64);
                 r.offset    = elf_read_u64!(eh, br)?;
                 r.vaddr     = elf_read_u64!(eh, br)?;
                 r.paddr     = elf_read_u64!(eh, br)?;
@@ -238,6 +261,7 @@ impl Segment {
                 r.paddr     = elf_read_u32!(eh, br)? as u64;
                 r.filesz    = elf_read_u32!(eh, br)? as u64;
                 r.memsz     = elf_read_u32!(eh, br)? as u64;
+                r.flags     = types::SegmentFlags::from_bits_truncate(elf_read_u32!(eh, br)? as u64);
                 r.align     = elf_read_u32!(eh, br)? as u64;
             },
         };
@@ -248,7 +272,7 @@ impl Segment {
         elf_write_u32!(eh, w, self.phtype.to_u32().unwrap())?;
         match eh.ident_class  {
             types::Class::Class64 => {
-                elf_write_u32!(eh, w, self.flags)?;
+                elf_write_u32!(eh, w, self.flags.bits() as u32)?;
                 elf_write_u64!(eh, w, self.offset)?;
                 elf_write_u64!(eh, w, self.vaddr)?;
                 elf_write_u64!(eh, w, self.paddr)?;
@@ -257,12 +281,12 @@ impl Segment {
                 elf_write_u64!(eh, w, self.align)?;
             },
             types::Class::Class32 => {
-                elf_write_u32!(eh, w, self.flags)?;
                 elf_write_u32!(eh, w, self.offset as u32)?;
                 elf_write_u32!(eh, w, self.vaddr  as u32)?;
                 elf_write_u32!(eh, w, self.paddr  as u32)?;
                 elf_write_u32!(eh, w, self.filesz as u32)?;
                 elf_write_u32!(eh, w, self.memsz  as u32)?;
+                elf_write_u32!(eh, w, self.flags.bits() as u32)?;
                 elf_write_u32!(eh, w, self.align  as u32)?;
             },
         };
@@ -327,33 +351,51 @@ impl Elf {
         Ok(r)
     }
 
-    pub fn to_writer<R>(&mut self, io: &mut R) -> Result<(), Error> where R: Write + Seek {
-
-        let mut off = self.header.size();
+    pub fn write_start<R>(&mut self, io: &mut R) -> Result<(), Error> where R: Write + Seek {
+        io.seek(SeekFrom::Start(0))?;
+        let off = self.header.size();
         io.write(&vec![0;off]);
+        Ok(())
+    }
+
+    pub fn write_end<R>(&mut self, io: &mut R) -> Result<(), Error> where R: Write + Seek {
+        let mut off = io.seek(SeekFrom::Current(0))? as usize;
 
         //segments
-        self.header.phoff = off as u64;
-        for seg in &self.segments {
-            seg.to_writer(&self.header, io)?;
+        if self.segments.len() > 0 {
+            self.header.phoff = off as u64;
+            for seg in &self.segments {
+                seg.to_writer(&self.header, io)?;
+            }
+            let at = io.seek(SeekFrom::Current(0))? as usize;
+            self.header.phnum       = self.segments.len() as u16;
+            self.header.phentsize   = ((at - off)/ self.segments.len()) as u16;
+            off = at;
         }
-        let at = io.seek(SeekFrom::Current(0))? as usize;
-        self.header.phnum       = self.segments.len() as u16;
-        self.header.phentsize   = ((at - off)/ self.segments.len()) as u16;
-        off = at;
+
+
+        //always prepend a null section. i don't know yet why, but this is what everyone does.
+        self.sections.insert(0, Section::default());
 
         //shstrtab
-        self.sections[self.header.shstrndx as usize].offset = off as u64;
+        let mut shstrtab = Section::default();
+        shstrtab.name = String::from(".shstrtab");
+        shstrtab.offset = off as u64;
+        self.header.shstrndx = self.sections.len() as u16;
+        self.sections.push(shstrtab);
+
+
         let mut inoff = 0;
         for sec in &mut self.sections {
-           io.write(&sec.name.as_ref());
-           io.write(&[0;1]);
-           sec._name = inoff as u32;
-           inoff += sec.name.len() + 1;
+            io.write(&sec.name.as_ref());
+            io.write(&[0;1]);
+            sec._name = inoff as u32;
+            inoff += sec.name.len() + 1;
         }
         let at = io.seek(SeekFrom::Current(0))? as usize;
         self.sections[self.header.shstrndx as usize].size = (at - off) as u64;
         off = at;
+
 
         //section headers
         self.header.shoff = off as u64;
@@ -364,7 +406,6 @@ impl Elf {
         self.header.shnum       = self.sections.len() as u16;
         self.header.shentsize   = ((at - off)/ self.sections.len()) as u16;
         off = at;
-
 
         io.seek(SeekFrom::Start(0))?;
         self.header.to_writer(io)?;
