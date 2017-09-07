@@ -1,14 +1,15 @@
-extern crate num;
 extern crate byteorder;
-#[macro_use] extern crate enum_primitive;
+#[macro_use] extern crate enum_primitive_derive;
 #[macro_use] extern crate bitflags;
 #[macro_use] mod read_macros;
+extern crate num_traits;
 pub mod relocation;
 pub mod types;
 pub mod symbol;
 
-use std::io::{Read, Seek, SeekFrom};
-use num::FromPrimitive;
+use std::io::{Read, Write, Seek, SeekFrom};
+use std::io::BufWriter;
+use num_traits::{FromPrimitive, ToPrimitive};
 
 #[derive(Debug)]
 pub enum Error {
@@ -52,7 +53,7 @@ impl Header {
     pub fn from_reader<R>(io:&mut  R) -> Result<Header, Error> where R: Read{
         let mut r = Header::default();
         let mut b = [0;16];
-        io.read(&mut b)?;
+        io.read_exact(&mut b)?;
         r.ident_magic.clone_from_slice(&b[0..4]);
 
         if r.ident_magic != [0x7F,0x45,0x4c,0x46] {
@@ -102,6 +103,40 @@ impl Header {
 
         Ok(r)
     }
+
+    pub fn to_writer<R>(&self, io:&mut  R) -> Result<(), Error> where R: Write {
+        let mut w = BufWriter::new(io);
+        w.write(&self.ident_magic)?;
+        w.write(&[self.ident_class.to_u8().unwrap()])?;
+        w.write(&[self.ident_endianness.to_u8().unwrap()])?;
+        w.write(&[self.ident_version.to_u8().unwrap()])?;
+        w.write(&[self.ident_abi.to_u8().unwrap()])?;
+        w.write(&[0;8])?;
+
+        elf_write_u16!(self, w, self.etype.to_u16().unwrap())?;
+        elf_write_u16!(self, w, self.machine.to_u16().unwrap())?;
+        elf_write_u32!(self, w, self.version.to_u32().unwrap())?;
+        elf_write_uclass!(self, w, self.entry.to_u64().unwrap())?;
+        elf_write_uclass!(self, w, self.phoff.to_u64().unwrap())?;
+        elf_write_uclass!(self, w, self.shoff.to_u64().unwrap())?;
+        elf_write_u32!(self, w, self.flags.to_u32().unwrap())?;
+        elf_write_u16!(self, w, self.ehsize.to_u16().unwrap())?;
+        elf_write_u16!(self, w, self.phentsize.to_u16().unwrap())?;
+        elf_write_u16!(self, w, self.phnum.to_u16().unwrap())?;
+        elf_write_u16!(self, w, self.shentsize.to_u16().unwrap())?;
+        elf_write_u16!(self, w, self.shnum.to_u16().unwrap())?;
+        elf_write_u16!(self, w, self.shstrndx.to_u16().unwrap())?;
+
+        Ok(())
+    }
+
+    pub fn size(&self) ->  usize {
+        16 + 2 + 2 + 4 +
+        match self.ident_class {
+            types::Class::Class32 => 4 + 4 + 4,
+            types::Class::Class64 => 8 + 8 + 8,
+        } + 4 + 2 + 2 +2 +2 +2 +2
+    }
 }
 
 #[derive(Default, Debug)]
@@ -143,6 +178,22 @@ impl Section {
         r.addralign = elf_read_uclass!(eh, br)?;
         r.entsize   = elf_read_uclass!(eh, br)?;
         Ok(r)
+    }
+
+    pub fn to_writer<R>(&self, eh: &Header, io: &mut  R) -> Result<(), Error> where R: Write {
+        let mut w = BufWriter::new(io);
+        elf_write_u32!(eh, w, self._name)?;
+        elf_write_u32!(eh, w, self.shtype.to_u32().unwrap())?;
+        elf_write_uclass!(eh, w, self.flags.bits())?;
+
+        elf_write_uclass!(eh, w, self.addr)?;
+        elf_write_uclass!(eh, w, self.offset)?;
+        elf_write_uclass!(eh, w, self.size)?;
+        elf_write_u32!(eh, w, self.link)?;
+        elf_write_u32!(eh, w, self.info)?;
+        elf_write_uclass!(eh, w, self.addralign)?;
+        elf_write_uclass!(eh, w, self.entsize)?;
+        Ok(())
     }
 }
 
@@ -192,7 +243,33 @@ impl Segment {
         };
         Ok(r)
     }
+    pub fn to_writer<R>(&self, eh: &Header, io: &mut  R) -> Result<(), Error> where R: Write {
+        let mut w = BufWriter::new(io);
+        elf_write_u32!(eh, w, self.phtype.to_u32().unwrap())?;
+        match eh.ident_class  {
+            types::Class::Class64 => {
+                elf_write_u32!(eh, w, self.flags)?;
+                elf_write_u64!(eh, w, self.offset)?;
+                elf_write_u64!(eh, w, self.vaddr)?;
+                elf_write_u64!(eh, w, self.paddr)?;
+                elf_write_u64!(eh, w, self.filesz)?;
+                elf_write_u64!(eh, w, self.memsz)?;
+                elf_write_u64!(eh, w, self.align)?;
+            },
+            types::Class::Class32 => {
+                elf_write_u32!(eh, w, self.flags)?;
+                elf_write_u32!(eh, w, self.offset as u32)?;
+                elf_write_u32!(eh, w, self.vaddr  as u32)?;
+                elf_write_u32!(eh, w, self.paddr  as u32)?;
+                elf_write_u32!(eh, w, self.filesz as u32)?;
+                elf_write_u32!(eh, w, self.memsz  as u32)?;
+                elf_write_u32!(eh, w, self.align  as u32)?;
+            },
+        };
+        Ok(())
+    }
 }
+
 
 #[derive(Default, Debug)]
 pub struct Elf {
@@ -204,11 +281,12 @@ pub struct Elf {
 }
 
 impl Elf {
+
     pub fn from_reader<R>(io: &mut R) -> Result<Elf, Error> where R: Read + Seek {
         let mut r = Elf::default();
         r.header = Header::from_reader(io)?;
 
-        // parse program
+        // parse segments
         io.seek(SeekFrom::Start(r.header.phoff))?;
         for _ in 0..r.header.phnum {
             let segment = Segment::from_reader(io, &r.header)?;
@@ -247,6 +325,50 @@ impl Elf {
         }
 
         Ok(r)
+    }
+
+    pub fn to_writer<R>(&mut self, io: &mut R) -> Result<(), Error> where R: Write + Seek {
+
+        let mut off = self.header.size();
+        io.write(&vec![0;off]);
+
+        //segments
+        self.header.phoff = off as u64;
+        for seg in &self.segments {
+            seg.to_writer(&self.header, io)?;
+        }
+        let at = io.seek(SeekFrom::Current(0))? as usize;
+        self.header.phnum       = self.segments.len() as u16;
+        self.header.phentsize   = ((at - off)/ self.segments.len()) as u16;
+        off = at;
+
+        //shstrtab
+        self.sections[self.header.shstrndx as usize].offset = off as u64;
+        let mut inoff = 0;
+        for sec in &mut self.sections {
+           io.write(&sec.name.as_ref());
+           io.write(&[0;1]);
+           sec._name = inoff as u32;
+           inoff += sec.name.len() + 1;
+        }
+        let at = io.seek(SeekFrom::Current(0))? as usize;
+        self.sections[self.header.shstrndx as usize].size = (at - off) as u64;
+        off = at;
+
+        //section headers
+        self.header.shoff = off as u64;
+        for sec in &self.sections {
+            sec.to_writer(&self.header, io)?;
+        }
+        let at = io.seek(SeekFrom::Current(0))? as usize;
+        self.header.shnum       = self.sections.len() as u16;
+        self.header.shentsize   = ((at - off)/ self.sections.len()) as u16;
+        off = at;
+
+
+        io.seek(SeekFrom::Start(0))?;
+        self.header.to_writer(io)?;
+        Ok(())
     }
 }
 

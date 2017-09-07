@@ -5,8 +5,8 @@ authors = ["Arvid E. Picciani <aep@exys.org>"]
 
 [dependencies]
 byteorder = "1"
-enum_primitive = "0"
-num = "0"
+enum-primitive-derive = "0.1"
+num-traits = "^0.1"
 bitflags = "0"
 
 

@@ -3,7 +3,6 @@ extern crate elfkit;
 use std::env;
 use std::fs::File;
 use elfkit::{Elf};
-use elfkit::relocation::{Amd64Relocation};
 use elfkit::symbol::{Symbol};
 use std::io::{Read, Seek, SeekFrom};
 

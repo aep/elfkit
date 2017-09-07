@@ -1,10 +1,7 @@
-extern crate byteorder;
-extern crate num;
-
 use std::io::{Read};
 use {Error, Elf};
 use types;
-use num::FromPrimitive;
+use num_traits::FromPrimitive;
 
 #[derive(Debug, Default)]
 pub struct Symbol {
