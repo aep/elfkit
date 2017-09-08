@@ -13,8 +13,22 @@ cargo run --example readelf ./tests/samples/amd64_exe
 ![screenshot](/examples/readelf-screenshot.png?raw=true)
 
 
+implementation status
+---------------------
+
+by architecture
+
+| abi          | headers | relocations | 
+|--------------|---------|-------------|
+| x86_64       | ok      | wip         |
+| mips32r2 o32 | ok      |             |
+| arm eabi     | ok      |             |
+
+
 references
-==========
-[https://en.wikipedia.org/wiki/Executable_and_Linkable_Format](Executable_and_Linkable_Format)
-[https://software.intel.com/sites/default/files/article/402129/mpx-linux64-abi.pdf](X86_64 Abi)
-[http://infocenter.arm.com/help/topic/com.arm.doc.ihi0044f/IHI0044F_aaelf.pdf](arm abi)
+---------------------
+[Executable_and_Linkable_Format](https://en.wikipedia.org/wiki/Executable_and_Linkable_Format)
+[X86_64 Abi](https://software.intel.com/sites/default/files/article/402129/mpx-linux64-abi.pdf)
+[arm eabi](http://infocenter.arm.com/help/topic/com.arm.doc.ihi0044f/IHI0044F_aaelf.pdf)
+[mips abi1](https://dmz-portal.imgtec.com/wiki/MIPS_ABI_Project)
+[mips abiflags](https://dmz-portal.imgtec.com/wiki/MIPS_O32_ABI_-_FR0_and_FR1_Interlinking)

@@ -27,6 +27,7 @@ pub enum Error {
     InvalidAbi(u8),
     InvalidElfType(u16),
     InvalidMachineType(u16),
+    InvalidHeaderFlags(u32),
     InvalidSectionFlags(u64),
     InvalidSegmentType(u32),
     InvalidSectionType(u32),
@@ -51,6 +52,7 @@ pub struct Header {
     pub ident_endianness: types::Endianness,
     pub ident_version:    u8, // 1
     pub ident_abi:        types::Abi,
+    pub ident_abiversion: u8,
 
     pub etype:      types::ElfType,
     pub machine:    types::Machine,
@@ -58,7 +60,7 @@ pub struct Header {
     pub entry:      u64, //program counter starts here
     pub phoff:      u64, //offset of program header table
     pub shoff:      u64, //offset of section header table
-    pub flags:      u32, //no idea
+    pub flags:      types::HeaderFlags,
     pub ehsize:     u16, //size of this header (who cares?)
     pub phentsize:  u16, //the size of a program header table entry
     pub phnum:      u16, //the number of entries in the program header table
@@ -74,13 +76,14 @@ impl Default for Header {
         ident_endianness: types::Endianness::LittleEndian,
         ident_version:    1,
         ident_abi:        types::Abi::SYSV,
+        ident_abiversion: 0,
         etype:      types::ElfType::default(),
         machine:    types::Machine::default(),
         version:    1,
         entry:      0,
         phoff:      0,
         shoff:      0,
-        flags:      0,
+        flags:      types::HeaderFlags::default(),
         ehsize:     0,
         phentsize:  0,
         phnum:      0,
@@ -122,6 +125,8 @@ impl Header {
             None => return Err(Error::InvalidAbi(b[7])),
         };
 
+        r.ident_abiversion = b[8];
+
         let reb = elf_read_u16!(r, io)?;
         r.etype     = match types::ElfType::from_u16(reb) {
             Some(v) => v,
@@ -142,7 +147,14 @@ impl Header {
         r.entry     = elf_read_uclass!(r, io)?;
         r.phoff     = elf_read_uclass!(r, io)?;
         r.shoff     = elf_read_uclass!(r, io)?;
-        r.flags     = elf_read_u32!(r, io)?;
+
+        let reb = elf_read_u32!(r, io)?;
+        r.flags = types::HeaderFlags::from_bits_truncate(reb);
+        //r.flags = match types::HeaderFlags::from_bits(reb) {
+        //    Some(v) => v,
+        //    None => return Err(Error::InvalidHeaderFlags(reb)),
+        //};
+
         r.ehsize    = elf_read_u16!(r, io)?;
         r.phentsize = elf_read_u16!(r, io)?;
         r.phnum     = elf_read_u16!(r, io)?;
@@ -168,7 +180,7 @@ impl Header {
         elf_write_uclass!(self, w, self.entry.to_u64().unwrap())?;
         elf_write_uclass!(self, w, self.phoff.to_u64().unwrap())?;
         elf_write_uclass!(self, w, self.shoff.to_u64().unwrap())?;
-        elf_write_u32!(self, w, self.flags.to_u32().unwrap())?;
+        elf_write_u32!(self, w, self.flags.bits())?;
         elf_write_u16!(self, w, self.ehsize.to_u16().unwrap())?;
         elf_write_u16!(self, w, self.phentsize.to_u16().unwrap())?;
         elf_write_u16!(self, w, self.phnum.to_u16().unwrap())?;
@@ -211,10 +223,7 @@ impl SectionHeader {
         r.name     = elf_read_u32!(eh, br)?;
 
         let reb  = elf_read_u32!(eh, br)?;
-        r.shtype = match types::SectionType::from_u32(reb) {
-            Some(v) => v,
-            None => return Err(Error::InvalidSectionType(reb)),
-        };
+        r.shtype = types::SectionType(reb);
 
         let reb = elf_read_uclass!(eh, br)?;
         r.flags = match types::SectionFlags::from_bits(reb) {
@@ -234,7 +243,7 @@ impl SectionHeader {
     pub fn to_writer<R>(&self, eh: &Header, io: &mut  R) -> Result<(), Error> where R: Write {
         let mut w = BufWriter::new(io);
         elf_write_u32!(eh, w, self.name)?;
-        elf_write_u32!(eh, w, self.shtype.to_u32().unwrap())?;
+        elf_write_u32!(eh, w, self.shtype.to_u32())?;
         elf_write_uclass!(eh, w, self.flags.bits())?;
 
         elf_write_uclass!(eh, w, self.addr)?;

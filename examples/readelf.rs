@@ -24,13 +24,14 @@ fn main() {
     println!("  Data:                              {:?}", elf.header.ident_endianness);
     println!("  Version:                           {}", elf.header.ident_version);
     println!("  OS/ABI:                            {:?}", elf.header.ident_abi);
+    println!("  ABI Version:                       {:?}", elf.header.ident_abiversion);
     println!("  Type:                              {:?}", elf.header.etype);
     println!("  Machine:                           {:?}", elf.header.machine);
     println!("  Version:                           {:?}", elf.header.version);
     println!("  Entry point address:               0x{:x}", elf.header.entry);
     println!("  Start of program headers:          {} (bytes into file)", elf.header.phoff);
     println!("  Start of section headers:          {} (bytes into file)", elf.header.shoff);
-    println!("  Flags:                             {}", elf.header.flags);
+    println!("  Flags:                             0x{:x} {:?}", elf.header.flags, elf.header.flags);
     println!("  Size of this header:               {} (bytes)", elf.header.ehsize);
     println!("  Size of program headers:           {} (bytes)", elf.header.phentsize);
     println!("  Number of program headers:         {}", elf.header.phnum);
@@ -43,8 +44,12 @@ fn main() {
 
     for (i, section) in elf.sections.iter().enumerate() {
 
-        println!("  [{:>2}] {:<16.16} {:<14.14} {} {} {} {} {:<3} {:<3.3} {:<3} {:<2.2}",
-                 i, section.name.bold(), format!("{:?}", section.header.shtype),
+        println!("  [{:>2}] {:<16.16} {} {} {} {} {} {:<3} {:<3.3} {:<3} {:<2.2}",
+                 i, section.name.bold(),
+                 match section.header.shtype.typename(&elf.header) {
+                     Some(s) => format!("{:<14.14}", s),
+                     None    => hextab(14, section.header.shtype.to_u32()),
+                 },
                  hextab(16, section.header.addr), hextab(8, section.header.offset),
                  hextab(8, section.header.size), hextab(4, section.header.entsize),
                  section.header.flags, section.header.link, section.header.info, section.header.addralign
@@ -56,10 +61,10 @@ fn main() {
     println!("  {}: write, {}: alloc, {}: execute, {}: merge, {}: strings, {}: info,
   {}: link order, {}: extra OS processing required, {}: group, {}: TLS,
   {}: compressed, {}: OS specific, {}: exclude, {}: large,
-  {}: processor specific",
+  {}: mips: global data area",
   "W".bold(), "A".bold(), "X".bold(), "M".bold(), "S".bold(), "I".bold(),
   "L".bold(), "O".bold(), "G".bold(), "T".bold(),
-  "C".bold(), "o".bold(), "E".bold(), "l".bold(), "p".bold());
+  "C".bold(), "o".bold(), "E".bold(), "l".bold(), "g".bold());
 
     println!("");
     println!("{} at offset 0x{:x}:", "Program Headers (Segments)".bold(), elf.header.phoff);
