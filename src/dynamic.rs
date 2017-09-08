@@ -1,5 +1,5 @@
 use std::io::{Read, Write};
-use {Elf, Error, SectionContent};
+use {Header, Error, SectionContent};
 use types;
 use num_traits::{FromPrimitive, ToPrimitive};
 
@@ -17,19 +17,11 @@ pub struct Dynamic {
 }
 
 impl Dynamic {
-    pub fn from_reader<R>(io: &mut R, elf: &Elf) -> Result<Vec<Dynamic>, Error> where R: Read {
+    pub fn from_reader<R>(io: &mut R, strtab: Option<&str>,eh: &Header) -> Result<Vec<Dynamic>, Error> where R: Read {
         let mut r = Vec::new();
 
-        //FIXME look up by link rather than name
-        let strtab: Option<&str> = elf.get_section_by_name(".dynstr").map(|s| {
-            match s.content {
-                SectionContent::Strings(ref s) => s.as_ref(),
-                _ => unreachable!()
-            }
-        });
-
-        while let Ok(tag) = elf_read_uclass!(elf.header, io) {
-            let val = elf_read_uclass!(elf.header, io)?;
+        while let Ok(tag) = elf_read_uclass!(eh, io) {
+            let val = elf_read_uclass!(eh, io)?;
 
             match types::DynamicType::from_u64(tag) {
                 None => return Err(Error::InvalidDynamicType(tag)),
@@ -60,14 +52,14 @@ impl Dynamic {
 
         Ok(r)
     }
-    pub fn to_writer<R>(&self, io: &mut R, elf: &Elf) -> Result<(), Error> where R: Write {
+    pub fn to_writer<R>(&self, io: &mut R, eh: &Header) -> Result<(), Error> where R: Write {
 
-        elf_write_uclass!(elf.header, io, self.dhtype.to_u64().unwrap())?;
+        elf_write_uclass!(eh, io, self.dhtype.to_u64().unwrap())?;
 
         match self.content {
-            DynamicContent::None => {elf_write_uclass!(elf.header, io, 0)?;},
-            DynamicContent::String(ref s) => {elf_write_uclass!(elf.header, io, 1/*FIXME*/)?;},
-            DynamicContent::Address(ref v) => {elf_write_uclass!(elf.header, io, *v)?;},
+            DynamicContent::None => {elf_write_uclass!(eh, io, 0)?;},
+            DynamicContent::String(ref s) => {elf_write_uclass!(eh, io, 1/*FIXME*/)?;},
+            DynamicContent::Address(ref v) => {elf_write_uclass!(eh, io, *v)?;},
         }
         Ok(())
     }

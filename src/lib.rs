@@ -37,6 +37,7 @@ pub enum Error {
     InvalidSymbolVis(u8),
     InvalidDynamicType(u64),
     MissingShstrtabSection,
+    LinkedSectionIsNotStrings(u32),
 }
 
 impl From<::std::io::Error> for Error {
@@ -429,10 +430,6 @@ impl Elf {
         Ok(r)
     }
 
-    pub fn get_section_by_name(&self, name: &str) -> Option<&Section> {
-        self.sections.iter().find(|&s|s.name == name)
-    }
-
     pub fn load_all<R>(&mut self, io: &mut R) -> Result<(), Error> where R: Read + Seek {
 
         let mut sections = self.sections.to_vec();
@@ -446,27 +443,36 @@ impl Elf {
                     sec.content = SectionContent::Relocations(relocs);
                 },
                 types::SectionType::SYMTAB => {
-                    let strtab  = self.get_section_by_name(".strtab").map(|s| {
-                        match s.content {
+                    let strtab  = match self.sections.get(sec.header.link as usize) {
+                        None => return Err(Error::LinkedSectionIsNotStrings(sec.header.link)),
+                        Some(ref strsec) => match strsec.content {
                             SectionContent::Strings(ref s) => s.as_ref(),
-                            _ => unreachable!()
+                            _ => return Err(Error::LinkedSectionIsNotStrings(sec.header.link)),
                         }
-                    });
-                    let symbols = Symbol::from_reader(io, strtab, &self.header).unwrap();
+                    };
+                    let symbols = Symbol::from_reader(io, Some(strtab), &self.header).unwrap();
                     sec.content = SectionContent::Symbols(symbols);
                 }
                 types::SectionType::DYNSYM => {
-                    let strtab  = self.get_section_by_name(".dynstr").map(|s| {
-                        match s.content {
+                    let strtab  = match self.sections.get(sec.header.link as usize) {
+                        None => return Err(Error::LinkedSectionIsNotStrings(sec.header.link)),
+                        Some(ref strsec) => match strsec.content {
                             SectionContent::Strings(ref s) => s.as_ref(),
-                            _ => unreachable!()
+                            _ => return Err(Error::LinkedSectionIsNotStrings(sec.header.link)),
                         }
-                    });
-                    let symbols = Symbol::from_reader(io, strtab, &self.header).unwrap();
+                    };
+                    let symbols = Symbol::from_reader(io, Some(strtab), &self.header).unwrap();
                     sec.content = SectionContent::Symbols(symbols);
                 },
                 types::SectionType::DYNAMIC => {
-                    let dynamics = Dynamic::from_reader(io, &self).unwrap();
+                    let strtab  = match self.sections.get(sec.header.link as usize) {
+                        None => return Err(Error::LinkedSectionIsNotStrings(sec.header.link)),
+                        Some(ref strsec) => match strsec.content {
+                            SectionContent::Strings(ref s) => s.as_ref(),
+                            _ => return Err(Error::LinkedSectionIsNotStrings(sec.header.link)),
+                        }
+                    };
+                    let dynamics = Dynamic::from_reader(io, Some(strtab), &self.header).unwrap();
                     sec.content  = SectionContent::Dynamic(dynamics);
                 }
                 types::SectionType::PROGBITS => {
@@ -555,7 +561,7 @@ impl Elf {
                 SectionContent::Symbols(ref v) => {},
                 SectionContent::Dynamic(ref v) => {
                     for dyn in v {
-                        dyn.to_writer(io, &self);
+                        dyn.to_writer(io, &self.header);
                     }
                 },
             }
