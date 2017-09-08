@@ -3,10 +3,7 @@ extern crate colored;
 
 use std::env;
 use std::fs::File;
-use elfkit::Elf;
-use elfkit::relocation::{Relocation};
-use elfkit::symbol::{Symbol};
-use elfkit::types;
+use elfkit::{Elf, Relocation, Symbol, Dynamic, SectionContent, types};
 use std::io::{Read, Seek, SeekFrom};
 use colored::*;
 
@@ -42,17 +39,16 @@ fn main() {
     println!("  Section header string table index: {}", elf.header.shstrndx);
     println!("");
     println!("{} at offset 0x{:x}:", "Section Headers".bold(), elf.header.shoff);
-    println!("  [Nr] Name              Type             Address           Offset");
-    println!("       Size              EntSize          Flags  Link  Info Align");
-
+    println!("  [Nr] Name             Type           Address          Offset   Size     EntS Flg Lnk Inf Al");
 
     for (i, section) in elf.sections.iter().enumerate() {
-        println!("  [{:>2}] {:<17.17} {:<16.16} {}  {}",
-                 i, section.name.bold(), format!("{:?}", section.shtype),
-                 hextab(16, section.addr), hextab(8, section.offset));
 
-        println!("       {}  {} {:<6} {:<5.5} {:<4.4} {:<5.5}",
-                 hextab(16, section.size), hextab(16, section.entsize), section.flags, section.link, section.info, section.addralign);
+        println!("  [{:>2}] {:<16.16} {:<14.14} {} {} {} {} {:<3} {:<3.3} {:<3} {:<2.2}",
+                 i, section.name.bold(), format!("{:?}", section.header.shtype),
+                 hextab(16, section.header.addr), hextab(8, section.header.offset),
+                 hextab(8, section.header.size), hextab(4, section.header.entsize),
+                 section.header.flags, section.header.link, section.header.info, section.header.addralign
+                 );
     }
 
     println!("",);
@@ -93,28 +89,24 @@ fn main() {
     }
 
     for section in &elf.sections {
-        match section.shtype {
-            types::SectionType::RELA => {
+        match section.content {
+            SectionContent::Relocations(ref relocs)=> {
                 println!("");
                 println!("{} '{}' section at offset 0x{:x}:", "Relocations".bold(),
-                section.name.bold(), section.offset);
+                section.name.bold(), section.header.offset);
                 println!("  Offset           Type            Symbol           Addend");
 
-                file.seek(SeekFrom::Start(section.offset)).unwrap();
-                let relocs = Relocation::from_reader(&mut(&mut file).take(section.size), &elf.header).unwrap();
                 for reloc in relocs {
                     println!("  {} {:<15.15} {: <16.16x} {: <16.16x}",
                              hextab(16, reloc.addr), &format!("{:?}", reloc.rtype)[2..], reloc.sym, reloc.addend);
                 }
             },
-            types::SectionType::SYMTAB => {
+            SectionContent::Symbols(ref symbols) => {
                 println!("");
                 println!("{} '{}' section at offset 0x{:x}:", "Symbols".bold(),
-                section.name.bold(), section.offset);
+                section.name.bold(), section.header.offset);
                 println!("  Num: Value             Size Type    Bind   Vis      Ndx Name");
 
-                file.seek(SeekFrom::Start(section.offset)).unwrap();
-                let symbols = Symbol::from_reader(&mut(&mut file).take(section.size), &elf).unwrap();
                 for (i, symbol) in symbols.iter().enumerate() {
                     println!("  {:>3}: {} {:>5.5} {:<7.7} {:<6.6} {:<8.8} {:<3.3} {} ", i,
                              hextab(16, symbol.value), symbol.size,
@@ -129,6 +121,17 @@ fn main() {
                              symbol.name);
                 }
             },
+            SectionContent::Dynamic(ref dynamics) => {
+                println!("");
+                println!("{} '{}' section at offset 0x{:x}:", "Dynamic".bold(),
+                section.name.bold(), section.header.offset);
+                println!("  Tag          Value");
+
+                for dyn in dynamics {
+                    println!("  {:<12} {}", format!("{:?}", dyn.dhtype), hextab(16, dyn.val));
+
+                }
+            }
             _ => {}
         }
     }

@@ -6,17 +6,36 @@ extern crate num_traits;
 pub mod relocation;
 pub mod types;
 pub mod symbol;
+pub mod dynamic;
 
 use std::io::{Read, Write, Seek, SeekFrom};
 use std::io::BufWriter;
 use num_traits::{FromPrimitive, ToPrimitive};
 
+pub use relocation::Relocation;
+pub use symbol::Symbol;
+pub use dynamic::Dynamic;
+
 #[derive(Debug)]
 pub enum Error {
     Io(::std::io::Error),
     InvalidMagic,
-    InvalidFormat,
-    UnsupportedFormat,
+    InvalidIdentClass(u8),
+    InvalidEndianness(u8),
+    InvalidIdentVersion(u8),
+    InvalidVersion(u32),
+    InvalidAbi(u8),
+    InvalidElfType(u16),
+    InvalidMachineType(u16),
+    InvalidSectionFlags(u64),
+    InvalidSegmentType(u32),
+    InvalidSectionType(u32),
+    UnsupportedMachineTypeForRelocation,
+    InvalidSymbolType(u8),
+    InvalidSymbolBind(u8),
+    InvalidSymbolVis(u8),
+    InvalidDynamicType(u64),
+    MissingShstrtabSection,
 }
 
 impl From<::std::io::Error> for Error {
@@ -85,33 +104,40 @@ impl Header {
 
         r.ident_class  = match types::Class::from_u8(b[4]) {
             Some(v) => v,
-            None => return Err(Error::InvalidFormat),
+            None => return Err(Error::InvalidIdentClass(b[4])),
         };
 
         r.ident_endianness = match types::Endianness::from_u8(b[5]) {
             Some(v) => v,
-            None => return Err(Error::InvalidFormat),
+            None => return Err(Error::InvalidEndianness(b[5])),
         };
 
-        r.ident_version    = b[6];
+        r.ident_version = b[6];
         if r.ident_version != 1 {
-            return Err(Error::UnsupportedFormat);
+            return Err(Error::InvalidIdentVersion(b[6]));
         }
 
         r.ident_abi = match types::Abi::from_u8(b[7]) {
             Some(v) => v,
-            None => return Err(Error::InvalidFormat),
+            None => return Err(Error::InvalidAbi(b[7])),
         };
 
-        r.etype     = match types::ElfType::from_u16(elf_read_u16!(r, io)?) {
+        let reb = elf_read_u16!(r, io)?;
+        r.etype     = match types::ElfType::from_u16(reb) {
             Some(v) => v,
-            None => return Err(Error::InvalidFormat),
+            None => return Err(Error::InvalidElfType(reb)),
         };
-        r.machine   = match types::Machine::from_u16(elf_read_u16!(r, io)?) {
+
+        let reb = elf_read_u16!(r, io)?;
+        r.machine   = match types::Machine::from_u16(reb) {
             Some(v) => v,
-            None => return Err(Error::InvalidFormat),
+            None => return Err(Error::InvalidMachineType(reb)),
         };
+
         r.version   = elf_read_u32!(r, io)?;
+        if r.version != 1 {
+            return Err(Error::InvalidVersion(r.version));
+        }
 
         r.entry     = elf_read_uclass!(r, io)?;
         r.phoff     = elf_read_uclass!(r, io)?;
@@ -162,9 +188,9 @@ impl Header {
     }
 }
 
-#[derive(Default, Debug)]
-pub struct Section {
-    pub name:       String,
+#[derive(Default, Debug, Clone)]
+pub struct SectionHeader {
+    pub name:       u32,
     pub shtype:     types::SectionType,
     pub flags:      types::SectionFlags,
     pub addr:       u64,
@@ -174,24 +200,26 @@ pub struct Section {
     pub info:       u32,
     pub addralign:  u64,
     pub entsize:    u64,
-
-    pub _name:      u32,
 }
 
-impl Section {
-    pub fn from_reader<R>(io: &mut R, eh: &Header) -> Result<Section, Error> where R: Read {
-        let mut r = Section::default();
+impl SectionHeader {
+    pub fn from_reader<R>(io: &mut R, eh: &Header) -> Result<SectionHeader, Error> where R: Read {
+        let mut r = SectionHeader::default();
         let mut b = vec![0; eh.shentsize as usize];
         io.read(&mut b)?;
         let mut br = &b[..];
-        r._name     = elf_read_u32!(eh, br)?;
-        r.shtype    = match types::SectionType::from_u32(elf_read_u32!(eh, br)?) {
+        r.name     = elf_read_u32!(eh, br)?;
+
+        let reb  = elf_read_u32!(eh, br)?;
+        r.shtype = match types::SectionType::from_u32(reb) {
             Some(v) => v,
-            None => return Err(Error::UnsupportedFormat),
+            None => return Err(Error::InvalidSectionType(reb)),
         };
-        r.flags     = match types::SectionFlags::from_bits(elf_read_uclass!(eh, br)?) {
+
+        let reb = elf_read_uclass!(eh, br)?;
+        r.flags = match types::SectionFlags::from_bits(reb) {
             Some(v) => v,
-            None => return Err(Error::UnsupportedFormat),
+            None => return Err(Error::InvalidSectionFlags(reb)),
         };
         r.addr      = elf_read_uclass!(eh, br)?;
         r.offset    = elf_read_uclass!(eh, br)?;
@@ -205,7 +233,7 @@ impl Section {
 
     pub fn to_writer<R>(&self, eh: &Header, io: &mut  R) -> Result<(), Error> where R: Write {
         let mut w = BufWriter::new(io);
-        elf_write_u32!(eh, w, self._name)?;
+        elf_write_u32!(eh, w, self.name)?;
         elf_write_u32!(eh, w, self.shtype.to_u32().unwrap())?;
         elf_write_uclass!(eh, w, self.flags.bits())?;
 
@@ -222,7 +250,7 @@ impl Section {
 
 
 #[derive(Default, Debug)]
-pub struct Segment {
+pub struct SegmentHeader {
     pub phtype: types::SegmentType,
     pub flags:  types::SegmentFlags,
     pub offset: u64,
@@ -233,16 +261,17 @@ pub struct Segment {
     pub align:  u64,
 }
 
-impl Segment {
-    pub fn from_reader<R>(io: &mut R, eh: &Header) -> Result<Segment, Error> where R: Read {
-        let mut r = Segment::default();
+impl SegmentHeader {
+    pub fn from_reader<R>(io: &mut R, eh: &Header) -> Result<SegmentHeader, Error> where R: Read {
+        let mut r = SegmentHeader::default();
         let mut b = vec![0; eh.phentsize as usize];
         io.read(&mut b)?;
         let mut br = &b[..];
 
-        r.phtype = match types::SegmentType::from_u32(elf_read_u32!(eh, br)?) {
+        let reb = elf_read_u32!(eh, br)?;
+        r.phtype = match types::SegmentType::from_u32(reb) {
             Some(v) => v,
-            None => return Err(Error::UnsupportedFormat),
+            None => return Err(Error::InvalidSegmentType(reb)),
         };
 
         match eh.ident_class  {
@@ -295,13 +324,33 @@ impl Segment {
 }
 
 
-#[derive(Default, Debug)]
+#[derive(Clone)]
+pub enum SectionContent {
+    None,
+    Strings(String),
+    Relocations(Vec<Relocation>),
+    Symbols(Vec<Symbol>),
+    Dynamic(Vec<Dynamic>),
+}
+
+impl Default for SectionContent{
+    fn default() -> Self {SectionContent::None}
+}
+
+#[derive(Default, Clone)]
+pub struct Section {
+    pub header:  SectionHeader,
+    pub name:    String,
+    pub content: SectionContent,
+}
+
+
+
+#[derive(Default)]
 pub struct Elf {
     pub header:   Header,
+    pub segments: Vec<SegmentHeader>,
     pub sections: Vec<Section>,
-    pub segments: Vec<Segment>,
-
-    pub strtab:   String,
 }
 
 impl Elf {
@@ -313,48 +362,108 @@ impl Elf {
         // parse segments
         io.seek(SeekFrom::Start(r.header.phoff))?;
         for _ in 0..r.header.phnum {
-            let segment = Segment::from_reader(io, &r.header)?;
+            let segment = SegmentHeader::from_reader(io, &r.header)?;
             r.segments.push(segment);
         }
 
-        // parse sections
+        // parse section headers
         io.seek(SeekFrom::Start(r.header.shoff))?;
         for _ in 0..r.header.shnum {
-            let section = Section::from_reader(io, &r.header)?;
-            r.sections.push(section);
+            let sh = SectionHeader::from_reader(io, &r.header)?;
+            r.sections.push(Section{
+                header: sh,
+                name: String::default(),
+                content: SectionContent::None,
+            });
         }
 
-        // resolve names
-        let shstrtab = r.sections[r.header.shstrndx as usize].offset;
-        for sec in &mut r.sections {
-            let mut name = Vec::new();
-            io.seek(SeekFrom::Start(shstrtab + sec._name as u64))?;
-            for byte in io.bytes() {
-                let byte = byte.unwrap_or(0);
-                if byte == 0 {
-                    break
-                }
-                name.push(byte);
-            }
-            sec.name = String::from_utf8_lossy(&name).into_owned();
-        }
-
-        for sec in &r.sections {
-            if sec.name == ".strtab" {
-                io.seek(SeekFrom::Start(sec.offset))?;
-                let mut bb = vec![0; sec.size as usize];
+        //resolve all string tables
+        for ref mut sec in &mut r.sections {
+            if sec.header.shtype == types::SectionType::STRTAB {
+                io.seek(SeekFrom::Start(sec.header.offset))?;
+                let mut bb = vec![0; sec.header.size as usize];
                 io.read(&mut bb)?;
-                r.strtab = String::from_utf8_lossy(&bb).into_owned();
+                sec.content = SectionContent::Strings(String::from_utf8_lossy(&bb).into_owned());
             }
         }
 
+        // resolve section names
+        let shstrtab = match r.sections.get(r.header.shstrndx as usize) {
+            None => return Err(Error::MissingShstrtabSection),
+            Some(sec) => {
+                match sec.content {
+                    SectionContent::Strings(ref s) => s,
+                    _ => return Err(Error::MissingShstrtabSection),
+                }
+            }
+        }.clone();
+
+        for ref mut sec in &mut r.sections {
+            sec.name = shstrtab[sec.header.name as usize ..].split('\0').next().unwrap_or("").to_owned();
+        }
+
+        r.load_all(io)?;
         Ok(r)
+    }
+
+    pub fn get_section_by_name(&self, name: &str) -> Option<&Section> {
+        self.sections.iter().find(|&s|s.name == name)
+    }
+
+    pub fn load_all<R>(&mut self, io: &mut R) -> Result<(), Error> where R: Read + Seek {
+
+        let mut sections = self.sections.to_vec();
+        for ref mut sec in &mut sections {
+            io.seek(SeekFrom::Start(sec.header.offset))?;
+            let io = &mut io.take(sec.header.size);
+
+            match sec.header.shtype {
+                types::SectionType::RELA => {
+                    let relocs = Relocation::from_reader(io, &self.header)?;
+                    sec.content = SectionContent::Relocations(relocs);
+                },
+                types::SectionType::SYMTAB => {
+                    let strtab  = self.get_section_by_name(".strtab").map(|s| {
+                        match s.content {
+                            SectionContent::Strings(ref s) => s.as_ref(),
+                            _ => unreachable!()
+                        }
+                    });
+                    let symbols = Symbol::from_reader(io, strtab, &self.header).unwrap();
+                    sec.content = SectionContent::Symbols(symbols);
+                },
+                types::SectionType::DYNSYM => {
+                    let strtab  = self.get_section_by_name(".dynstr").map(|s| {
+                        match s.content {
+                            SectionContent::Strings(ref s) => s.as_ref(),
+                            _ => unreachable!()
+                        }
+                    });
+                    let symbols = Symbol::from_reader(io, strtab, &self.header).unwrap();
+                    sec.content = SectionContent::Symbols(symbols);
+                },
+                types::SectionType::DYNAMIC => {
+                    let strtab  = self.get_section_by_name(".strtab").map(|s| {
+                        match s.content {
+                            SectionContent::Strings(ref s) => s.as_ref(),
+                            _ => unreachable!()
+                        }
+                    });
+                    let dynamics = Dynamic::from_reader(io, strtab, &self.header).unwrap();
+                    sec.content  = SectionContent::Dynamic(dynamics);
+                }
+                _ => {},
+            }
+        }
+        self.sections = sections;
+
+        Ok(())
     }
 
     pub fn write_start<R>(&mut self, io: &mut R) -> Result<(), Error> where R: Write + Seek {
         io.seek(SeekFrom::Start(0))?;
         let off = self.header.size();
-        io.write(&vec![0;off]);
+        io.write(&vec![0;off])?;
         Ok(())
     }
 
@@ -377,6 +486,7 @@ impl Elf {
         //always prepend a null section. i don't know yet why, but this is what everyone does.
         self.sections.insert(0, Section::default());
 
+        /*
         //shstrtab
         let mut shstrtab = Section::default();
         shstrtab.name = String::from(".shstrtab");
@@ -387,8 +497,8 @@ impl Elf {
 
         let mut inoff = 0;
         for sec in &mut self.sections {
-            io.write(&sec.name.as_ref());
-            io.write(&[0;1]);
+            io.write(&sec.name.as_ref())?;
+            io.write(&[0;1])?;
             sec._name = inoff as u32;
             inoff += sec.name.len() + 1;
         }
@@ -409,6 +519,7 @@ impl Elf {
 
         io.seek(SeekFrom::Start(0))?;
         self.header.to_writer(io)?;
+        */
         Ok(())
     }
 }

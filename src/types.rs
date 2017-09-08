@@ -45,9 +45,9 @@ impl fmt::Display for SectionFlags {
 bitflags! {
 #[derive(Default)]
     pub struct SegmentFlags: u64 {
-        const X = (1 << 0);
-        const W = (1 << 1);
-        const R = (1 << 2);
+        const READABLE = (1 << 2);
+        const WRITABLE  = (1 << 1);
+        const EXECUTABLE = (1 << 0);
     }
 }
 
@@ -57,7 +57,7 @@ impl fmt::Display for SegmentFlags {
         if dstr == "(empty)" {
             return "".fmt(f);
         }
-        let dstr = dstr.split("|").map(|s| {s.trim()}).fold(String::new(), |acc, s| acc + s );
+        let dstr = dstr.split("|").map(|s| {&s.trim()[0..1]}).fold(String::new(), |acc, s| acc + s );
         dstr.fmt(f)
     }
 }
@@ -448,4 +448,82 @@ pub enum SegmentType {
 }
 impl Default for SegmentType {
     fn default() -> Self {SegmentType::NULL}
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Debug, Primitive, PartialEq, Clone)]
+pub enum DynamicType {
+    NULL            = 0,        /* Marks end of dynamic section */
+    NEEDED          = 1,        /* Name of needed library */
+    PLTRELSZ        = 2,        /* Size in bytes of PLT relocs */
+    PLTGOT          = 3,        /* Processor defined value */
+    HASH            = 4,        /* Address of symbol hash table */
+    STRTAB          = 5,        /* Address of string table */
+    SYMTAB          = 6,        /* Address of symbol table */
+    RELA            = 7,        /* Address of Rela relocs */
+    RELASZ          = 8,        /* Total size of Rela relocs */
+    RELAENT         = 9,        /* Size of one Rela reloc */
+    STRSZ           = 10,       /* Size of string table */
+    SYMENT          = 11,       /* Size of one symbol table entry */
+    INIT            = 12,       /* Address of init function */
+    FINI            = 13,       /* Address of termination function */
+    SONAME          = 14,       /* Name of shared object */
+    RPATH           = 15,       /* Library search path (deprecated) */
+    SYMBOLIC        = 16,       /* Start symbol search here */
+    REL             = 17,       /* Address of Rel relocs */
+    RELSZ           = 18,       /* Total size of Rel relocs */
+    RELENT          = 19,       /* Size of one Rel reloc */
+    PLTREL          = 20,       /* Type of reloc in PLT */
+    DEBUG           = 21,       /* For debugging; unspecified */
+    TEXTREL         = 22,       /* Reloc might modify .text */
+    JMPREL          = 23,       /* Address of PLT relocs */
+    BIND_NOW        = 24,       /* Process relocations of object */
+    INIT_ARRAY      = 25,       /* Array with addresses of init fct */
+    FINI_ARRAY      = 26,       /* Array with addresses of fini fct */
+    INIT_ARRAYSZ    = 27,       /* Size in bytes of DT_INIT_ARRAY */
+    FINI_ARRAYSZ    = 28,       /* Size in bytes of DT_FINI_ARRAY */
+    RUNPATH         = 29,       /* Library search path */
+    FLAGS           = 30,       /* Flags for the object being loaded */
+    PREINIT_ARRAY   = 32,       /* Array with addresses of preinit fct*/
+    PREINIT_ARRAYSZ = 33,       /* size in bytes of DT_PREINIT_ARRAY */
+    NUM             = 34,       /* Number used */
+
+    GNU_PRELINKED   = 0x6ffffdf5,   /* Prelinking timestamp */
+    GNU_CONFLICTSZ  = 0x6ffffdf6,   /* Size of conflict section */
+    GNU_LIBLISTSZ   = 0x6ffffdf7,   /* Size of library list */
+    CHECKSUM        = 0x6ffffdf8,
+    PLTPADSZ        = 0x6ffffdf9,
+    MOVEENT         = 0x6ffffdfa,
+    MOVESZ          = 0x6ffffdfb,
+    FEATURE_1       = 0x6ffffdfc,   /* Feature selection (DTF_*).  */
+    POSFLAG_1       = 0x6ffffdfd,   /* Flags for DT_* entries, effecting the following DT_* entry.  */
+    SYMINSZ         = 0x6ffffdfe,   /* Size of syminfo table (in bytes) */
+    SYMINENT        = 0x6ffffdff,   /* Entry size of syminfo */
+
+    GNU_HASH        = 0x6ffffef5,   /* GNU-style hash table.  */
+    TLSDESC_PLT     = 0x6ffffef6,
+    TLSDESC_GOT     = 0x6ffffef7,
+    GNU_CONFLICT    = 0x6ffffef8,   /* Start of conflict section */
+    GNU_LIBLIST     = 0x6ffffef9,   /* Library list */
+    CONFIG          = 0x6ffffefa,   /* Configuration information.  */
+    DEPAUDIT        = 0x6ffffefb,   /* Dependency auditing.  */
+    AUDIT           = 0x6ffffefc,   /* Object auditing.  */
+    PLTPAD          = 0x6ffffefd,   /* PLT padding.  */
+    MOVETAB         = 0x6ffffefe,   /* Move table.  */
+    SYMINFO         = 0x6ffffeff,   /* Syminfo table.  */
+
+    VERSYM          = 0x6ffffff0,
+    RELACOUNT       = 0x6ffffff9,
+    RELCOUNT        = 0x6ffffffa,
+    FLAGS_1         = 0x6ffffffb,   /* State flags, see DF_1_* below.  */
+    VERDEF          = 0x6ffffffc,   /* Address of version definition table */
+    VERDEFNUM       = 0x6ffffffd,   /* Number of version definitions */
+    VERNEED         = 0x6ffffffe,   /* Address of table with needed versions */
+    VERNEEDNUM      = 0x6fffffff,   /* Number of needed versions */
+    AUXILIARY       = 0x7ffffffd,   /* Shared object to load before self */
+    FILTER          = 0x7fffffff,   /* Shared object to get values from */
+}
+
+impl Default for DynamicType {
+    fn default() -> Self {DynamicType::NULL}
 }

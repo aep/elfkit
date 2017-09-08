@@ -1,9 +1,8 @@
 use std::io::{Read};
-use {Error, Elf};
-use types;
+use {Error, Header, types};
 use num_traits::FromPrimitive;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Symbol {
     pub shndx:  u16,
     pub value:  u64,
@@ -17,7 +16,7 @@ pub struct Symbol {
 
 impl Symbol {
     pub fn from_val(
-        e: &Elf,
+        tab: Option<&str>,
         _name:   u32,
         info:   u8,
         other:  u8,
@@ -25,21 +24,28 @@ impl Symbol {
         value:  u64,
         size:   u64,
         ) -> Result<Symbol, Error> {
-        let name  = e.strtab[_name as usize ..].split('\0').next().unwrap_or("").to_owned();
 
-        let stype = match types::SymbolType::from_u8(info & 0xf) {
-            Some(v) => v,
-            None => return Err(Error::UnsupportedFormat),
+        let name  = match tab {
+            Some(s) => s[_name as usize ..].split('\0').next().unwrap_or("").to_owned(),
+            None    => String::default(),
         };
 
-        let bind = match types::SymbolBind::from_u8(info >> 4) {
+        let reb = info & 0xf;
+        let stype = match types::SymbolType::from_u8(reb) {
             Some(v) => v,
-            None => return Err(Error::UnsupportedFormat),
+            None => return Err(Error::InvalidSymbolType(reb)),
         };
 
-        let vis = match types::SymbolVis::from_u8(other & 0x3) {
+        let reb = info >> 4;
+        let bind = match types::SymbolBind::from_u8(reb) {
             Some(v) => v,
-            None => return Err(Error::UnsupportedFormat),
+            None => return Err(Error::InvalidSymbolBind(reb)),
+        };
+
+        let reb = info & 0x3;
+        let vis = match types::SymbolVis::from_u8(reb) {
+            Some(v) => v,
+            None => return Err(Error::InvalidSymbolVis(reb)),
         };
 
         Ok(Symbol {
@@ -53,11 +59,10 @@ impl Symbol {
             vis:   vis,
         })
     }
-    pub fn from_reader<R>(io: &mut R, e: &Elf) -> Result<Vec<Symbol>, Error> where R: Read {
-        let eh = &e.header;
+    pub fn from_reader<R>(io: &mut R, tab: Option<&str>, eh: &Header) -> Result<Vec<Symbol>, Error> where R: Read {
         let mut r = Vec::new();
 
-        let mut b = vec![0; match e.header.ident_class {
+        let mut b = vec![0; match eh.ident_class {
             types::Class::Class64 => 24,
             types::Class::Class32 => 16,
         }];
@@ -74,7 +79,7 @@ impl Symbol {
                     let value = elf_read_u64!(eh, br)?;
                     let size  = elf_read_u64!(eh, br)?;
 
-                    Symbol::from_val(e, _name, info, other, shndx, value, size)?
+                    Symbol::from_val(tab, _name, info, other, shndx, value, size)?
                 },
                 types::Class::Class32 => {
                     let value = elf_read_u32!(eh, br)?;
@@ -84,7 +89,7 @@ impl Symbol {
                     br = &b[14..];
                     let shndx = elf_read_u16!(eh, br)?;
 
-                    Symbol::from_val(e, _name, info, other, shndx, value as u64, size as u64)?
+                    Symbol::from_val(tab, _name, info, other, shndx, value as u64, size as u64)?
                 },
             })
         }

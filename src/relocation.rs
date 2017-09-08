@@ -3,7 +3,7 @@ use {Header, Error};
 use types;
 use num_traits::FromPrimitive;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Relocation {
     pub addr:   u64,
     pub sym:    u32,
@@ -14,7 +14,7 @@ pub struct Relocation {
 impl Relocation {
     pub fn from_reader<R>(io: &mut R, eh: &Header) -> Result<Vec<Relocation>, Error> where R: Read {
         if eh.machine != types::Machine::X86_64 {
-            return Err(Error::UnsupportedFormat);
+            return Err(Error::UnsupportedMachineTypeForRelocation);
         }
 
         let mut r = Vec::new();
