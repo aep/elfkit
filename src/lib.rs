@@ -218,7 +218,7 @@ impl SectionHeader {
     pub fn from_reader<R>(io: &mut R, eh: &Header) -> Result<SectionHeader, Error> where R: Read {
         let mut r = SectionHeader::default();
         let mut b = vec![0; eh.shentsize as usize];
-        io.read(&mut b)?;
+        io.read_exact(&mut b)?;
         let mut br = &b[..];
         r.name     = elf_read_u32!(eh, br)?;
 
@@ -258,7 +258,7 @@ impl SectionHeader {
 }
 
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct SegmentHeader {
     pub phtype: types::SegmentType,
     pub flags:  types::SegmentFlags,
@@ -274,7 +274,7 @@ impl SegmentHeader {
     pub fn from_reader<R>(io: &mut R, eh: &Header) -> Result<SegmentHeader, Error> where R: Read {
         let mut r = SegmentHeader::default();
         let mut b = vec![0; eh.phentsize as usize];
-        io.read(&mut b)?;
+        io.read_exact(&mut b)?;
         let mut br = &b[..];
 
         let reb = elf_read_u32!(eh, br)?;
@@ -340,6 +340,7 @@ pub enum SectionContent {
     Relocations(Vec<Relocation>),
     Symbols(Vec<Symbol>),
     Dynamic(Vec<Dynamic>),
+    Progbits(Vec<u8>),
 }
 
 impl Default for SectionContent{
@@ -353,14 +354,25 @@ pub struct Section {
     pub content: SectionContent,
 }
 
-
-
-#[derive(Default)]
 pub struct Elf {
     pub header:   Header,
     pub segments: Vec<SegmentHeader>,
     pub sections: Vec<Section>,
 }
+
+impl Default for Elf {
+    fn default() -> Self {
+        let mut r = Elf {
+            header:   Header::default(),
+            segments: Vec::default(),
+            sections: Vec::default(),
+        };
+        //always prepend a null section. i don't know yet why, but this is what everyone does.
+        r.sections.insert(0, Section::default());
+        r
+    }
+}
+
 
 impl Elf {
 
@@ -369,6 +381,7 @@ impl Elf {
         r.header = Header::from_reader(io)?;
 
         // parse segments
+        r.segments.clear();
         io.seek(SeekFrom::Start(r.header.phoff))?;
         for _ in 0..r.header.phnum {
             let segment = SegmentHeader::from_reader(io, &r.header)?;
@@ -376,6 +389,7 @@ impl Elf {
         }
 
         // parse section headers
+        r.sections.clear();
         io.seek(SeekFrom::Start(r.header.shoff))?;
         for _ in 0..r.header.shnum {
             let sh = SectionHeader::from_reader(io, &r.header)?;
@@ -391,7 +405,7 @@ impl Elf {
             if sec.header.shtype == types::SectionType::STRTAB {
                 io.seek(SeekFrom::Start(sec.header.offset))?;
                 let mut bb = vec![0; sec.header.size as usize];
-                io.read(&mut bb)?;
+                io.read_exact(&mut bb)?;
                 sec.content = SectionContent::Strings(String::from_utf8_lossy(&bb).into_owned());
             }
         }
@@ -455,16 +469,12 @@ impl Elf {
                     let dynamics = Dynamic::from_reader(io, &self).unwrap();
                     sec.content  = SectionContent::Dynamic(dynamics);
                 }
-                _ => {
-                    match sec.name.as_ref() {
-                        ".interp" => {
-                            let mut bb = vec![0; sec.header.size as usize];
-                            io.read(&mut bb)?;
-                            sec.content = SectionContent::Strings(String::from_utf8_lossy(&bb).into_owned());
-                        },
-                        _ => {}
-                    }
-                },
+                types::SectionType::PROGBITS => {
+                    let mut bb = vec![0; sec.header.size as usize];
+                    io.read_exact(&mut bb)?;
+                    sec.content = SectionContent::Progbits(bb);
+                }
+                _ => {},
             }
         }
         self.sections = sections;
@@ -482,6 +492,9 @@ impl Elf {
     pub fn write_end<R>(&mut self, io: &mut R) -> Result<(), Error> where R: Write + Seek {
         let mut off = io.seek(SeekFrom::Current(0))? as usize;
 
+        // remove all string sections. they'll be rebuilt
+        self.sections.retain(|s|s.header.shtype != types::SectionType::STRTAB);
+
         //segments
         if self.segments.len() > 0 {
             self.header.phoff = off as u64;
@@ -494,44 +507,82 @@ impl Elf {
             off = at;
         }
 
-
-        //always prepend a null section. i don't know yet why, but this is what everyone does.
-        self.sections.insert(0, Section::default());
-
-        /*
         //shstrtab
-        let mut shstrtab = Section::default();
-        shstrtab.name = String::from(".shstrtab");
-        shstrtab.offset = off as u64;
-        self.header.shstrndx = self.sections.len() as u16;
-        self.sections.push(shstrtab);
-
-
-        let mut inoff = 0;
+        let mut shstrtab = String::from(".shstrndx\0");
+        let mut inoff = shstrtab.len();
         for sec in &mut self.sections {
-            io.write(&sec.name.as_ref())?;
-            io.write(&[0;1])?;
-            sec._name = inoff as u32;
+            shstrtab += &sec.name;
+            shstrtab += "\0";
+            sec.header.name = inoff as u32;
             inoff += sec.name.len() + 1;
         }
-        let at = io.seek(SeekFrom::Current(0))? as usize;
-        self.sections[self.header.shstrndx as usize].size = (at - off) as u64;
-        off = at;
+
+
+        self.sections.push(Section{
+            header: SectionHeader {
+                name:       0,
+                shtype:     types::SectionType::STRTAB,
+                flags:      types::SectionFlags::from_bits_truncate(0),
+                addr:       0,
+                offset:     0,
+                size:       0,
+                link:       0,
+                info:       0,
+                addralign:  0,
+                entsize:    0,
+            },
+            name: String::from(".shstrtab"),
+            content: SectionContent::Strings(shstrtab),
+        });
+        self.header.shstrndx = self.sections.len() as u16 - 1;
+
+
+        //sections
+
+        let mut sections = self.sections.to_vec();
+        for sec in &mut sections {
+            off = io.seek(SeekFrom::Current(0))? as usize;
+            sec.header.offset = off as u64;
+            match sec.content {
+                SectionContent::None => {},
+                SectionContent::Strings(ref v) => {
+                    io.write(&v.as_ref())?;
+                }
+                SectionContent::Progbits(ref v) => {
+                    io.write(&v)?;
+                }
+                SectionContent::Relocations(ref v) => {},
+                SectionContent::Symbols(ref v) => {},
+                SectionContent::Dynamic(ref v) => {
+                    for dyn in v {
+                        dyn.to_writer(io, &self);
+                    }
+                },
+            }
+            let at = io.seek(SeekFrom::Current(0))? as usize;
+            sec.header.size = (at - off) as u64;
+            off = at;
+        }
+        self.sections = sections;
 
 
         //section headers
+        let mut off = io.seek(SeekFrom::Current(0))? as usize;
         self.header.shoff = off as u64;
         for sec in &self.sections {
-            sec.to_writer(&self.header, io)?;
+            sec.header.to_writer(&self.header, io)?;
         }
         let at = io.seek(SeekFrom::Current(0))? as usize;
         self.header.shnum       = self.sections.len() as u16;
         self.header.shentsize   = ((at - off)/ self.sections.len()) as u16;
         off = at;
 
+        //hygene
+        self.header.ehsize = self.header.size() as u16;
+
         io.seek(SeekFrom::Start(0))?;
         self.header.to_writer(io)?;
-        */
+
         Ok(())
     }
 }

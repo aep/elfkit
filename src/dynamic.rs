@@ -1,7 +1,7 @@
-use std::io::{Read};
+use std::io::{Read, Write};
 use {Elf, Error, SectionContent};
 use types;
-use num_traits::FromPrimitive;
+use num_traits::{FromPrimitive, ToPrimitive};
 
 #[derive(Debug, Clone)]
 pub enum DynamicContent {
@@ -20,6 +20,7 @@ impl Dynamic {
     pub fn from_reader<R>(io: &mut R, elf: &Elf) -> Result<Vec<Dynamic>, Error> where R: Read {
         let mut r = Vec::new();
 
+        //FIXME look up by link rather than name
         let strtab: Option<&str> = elf.get_section_by_name(".dynstr").map(|s| {
             match s.content {
                 SectionContent::Strings(ref s) => s.as_ref(),
@@ -58,5 +59,16 @@ impl Dynamic {
         }
 
         Ok(r)
+    }
+    pub fn to_writer<R>(&self, io: &mut R, elf: &Elf) -> Result<(), Error> where R: Write {
+
+        elf_write_uclass!(elf.header, io, self.dhtype.to_u64().unwrap())?;
+
+        match self.content {
+            DynamicContent::None => {elf_write_uclass!(elf.header, io, 0)?;},
+            DynamicContent::String(ref s) => {elf_write_uclass!(elf.header, io, 1/*FIXME*/)?;},
+            DynamicContent::Address(ref v) => {elf_write_uclass!(elf.header, io, *v)?;},
+        }
+        Ok(())
     }
 }
