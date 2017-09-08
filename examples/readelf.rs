@@ -3,7 +3,7 @@ extern crate colored;
 
 use std::env;
 use std::fs::File;
-use elfkit::{Elf, Relocation, Symbol, Dynamic, SectionContent, types};
+use elfkit::{Elf, SectionContent, DynamicContent, types};
 use std::io::{Read, Seek, SeekFrom};
 use colored::*;
 
@@ -48,7 +48,7 @@ fn main() {
                  hextab(16, section.header.addr), hextab(8, section.header.offset),
                  hextab(8, section.header.size), hextab(4, section.header.entsize),
                  section.header.flags, section.header.link, section.header.info, section.header.addralign
-                 );
+                );
     }
 
     println!("",);
@@ -74,26 +74,12 @@ fn main() {
                  hextab(16, ph.filesz), hextab(16, ph.memsz), ph.flags,  ph.align);
     }
 
-    for segment in &elf.segments {
-        match segment.phtype {
-            types::SegmentType::INTERP => {
-                println!("");
-                println!("{} (INTERP) segment at offset 0x{:x}:", "Program interpreter".bold(), segment.offset);
-                file.seek(SeekFrom::Start(segment.offset)).unwrap();
-                let mut b = vec![0;segment.filesz as usize];
-                file.read_exact(&mut b).unwrap();
-                println!("  {}", String::from_utf8_lossy(&b).into_owned().trim());
-            },
-            _ => {}
-        };
-    }
-
     for section in &elf.sections {
         match section.content {
             SectionContent::Relocations(ref relocs)=> {
                 println!("");
-                println!("{} '{}' section at offset 0x{:x}:", "Relocations".bold(),
-                section.name.bold(), section.header.offset);
+                println!("{} relocation section at offset 0x{:x}:",
+                         section.name.bold(), section.header.offset);
                 println!("  Offset           Type            Symbol           Addend");
 
                 for reloc in relocs {
@@ -103,8 +89,8 @@ fn main() {
             },
             SectionContent::Symbols(ref symbols) => {
                 println!("");
-                println!("{} '{}' section at offset 0x{:x}:", "Symbols".bold(),
-                section.name.bold(), section.header.offset);
+                println!("{} symbols section at offset 0x{:x}:",
+                         section.name.bold(), section.header.offset);
                 println!("  Num: Value             Size Type    Bind   Vis      Ndx Name");
 
                 for (i, symbol) in symbols.iter().enumerate() {
@@ -123,13 +109,29 @@ fn main() {
             },
             SectionContent::Dynamic(ref dynamics) => {
                 println!("");
-                println!("{} '{}' section at offset 0x{:x}:", "Dynamic".bold(),
-                section.name.bold(), section.header.offset);
+                println!("{} dynamic linker section at offset 0x{:x}:",
+                         section.name.bold(), section.header.offset);
                 println!("  Tag          Value");
 
                 for dyn in dynamics {
-                    println!("  {:<12} {}", format!("{:?}", dyn.dhtype), hextab(16, dyn.val));
+                    println!("  {:<12} {}", format!("{:?}", dyn.dhtype),
+                    match dyn.content {
+                        DynamicContent::None  => String::default(),
+                        DynamicContent::String(ref s)  => s.clone(),
+                        DynamicContent::Address(u) => hextab(16, u),
+                    });
 
+                }
+            },
+            SectionContent::Strings(ref s) => {
+                match section.name.as_ref() {
+                    ".interp" => {
+                        println!("");
+                        println!("{} program interpreter section at offset 0x{:x}:",
+                                 section.name.bold(), section.header.offset);
+                        println!("  {}",s);
+                    },
+                    _ => {}
                 }
             }
             _ => {}

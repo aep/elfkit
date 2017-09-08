@@ -1,11 +1,17 @@
 Elfkit
 =========
 
-an elf read and manipulation library in rust, intended to be used in binary manipulation utils such as strip, link editors, etc
+an elf read and manipulation library in rust,
+intended to be used in binary manipulation utils such as strip, objcopy, link editors, etc.
+
+It includes some binutils replacements as example code.
 
 ```
 cargo run --example readelf ./tests/samples/amd64_exe
 ```
+
+![screenshot](/examples/readelf-screenshot.png?raw=true)
+
 
 references
 ==========

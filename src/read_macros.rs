@@ -26,7 +26,7 @@ impl<R: Read + ?Sized> ElfEndianReadExt for R {}
 
 #[macro_export]
 macro_rules! elf_read_u16 {
-    ($header:ident, $io:ident) => ({
+    ($header:expr, $io:ident) => ({
         use byteorder::{LittleEndian, BigEndian, ReadBytesExt};
         use types;
         match $header.ident_endianness {
@@ -38,7 +38,7 @@ macro_rules! elf_read_u16 {
 
 #[macro_export]
 macro_rules! elf_read_u32 {
-    ($header:ident, $io:ident) => ({
+    ($header:expr, $io:ident) => ({
         use byteorder::{LittleEndian, BigEndian, ReadBytesExt};
         use types;
         match $header.ident_endianness {
@@ -50,7 +50,7 @@ macro_rules! elf_read_u32 {
 
 #[macro_export]
 macro_rules! elf_read_u64 {
-    ($header:ident, $io:ident) => ({
+    ($header:expr, $io:ident) => ({
         use byteorder::{LittleEndian, BigEndian, ReadBytesExt};
         use types;
         match $header.ident_endianness {
@@ -62,7 +62,7 @@ macro_rules! elf_read_u64 {
 
 #[macro_export]
 macro_rules! elf_read_uclass {
-    ($header:ident, $io:ident) => ({
+    ($header:expr, $io:ident) => ({
         use types;
         match $header.ident_class {
             types::Class::Class32=> match elf_read_u32!($header, $io) {
@@ -77,7 +77,7 @@ macro_rules! elf_read_uclass {
 
 #[macro_export]
 macro_rules! elf_write_u16 {
-    ($header:ident, $io:ident, $val:expr) => ({
+    ($header:expr, $io:ident, $val:expr) => ({
         use byteorder::{LittleEndian, BigEndian, WriteBytesExt};
         use types;
         match $header.ident_endianness {
@@ -89,7 +89,7 @@ macro_rules! elf_write_u16 {
 
 #[macro_export]
 macro_rules! elf_write_u32 {
-    ($header:ident, $io:ident, $val:expr) => ({
+    ($header:expr, $io:ident, $val:expr) => ({
         use byteorder::{LittleEndian, BigEndian, WriteBytesExt};
         use types;
         match $header.ident_endianness {
@@ -101,7 +101,7 @@ macro_rules! elf_write_u32 {
 
 #[macro_export]
 macro_rules! elf_write_u64 {
-    ($header:ident, $io:ident, $val:expr) => ({
+    ($header:expr, $io:ident, $val:expr) => ({
         use byteorder::{LittleEndian, BigEndian, WriteBytesExt};
         use types;
         match $header.ident_endianness {
@@ -113,7 +113,7 @@ macro_rules! elf_write_u64 {
 
 #[macro_export]
 macro_rules! elf_write_uclass {
-    ($header:ident, $io:ident, $val:expr) => ({
+    ($header:expr, $io:ident, $val:expr) => ({
         use types;
         match $header.ident_class {
             types::Class::Class32 => elf_write_u32!($header, $io, $val as u32),

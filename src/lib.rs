@@ -14,7 +14,7 @@ use num_traits::{FromPrimitive, ToPrimitive};
 
 pub use relocation::Relocation;
 pub use symbol::Symbol;
-pub use dynamic::Dynamic;
+pub use dynamic::{Dynamic, DynamicContent};
 
 #[derive(Debug)]
 pub enum Error {
@@ -431,7 +431,7 @@ impl Elf {
                     });
                     let symbols = Symbol::from_reader(io, strtab, &self.header).unwrap();
                     sec.content = SectionContent::Symbols(symbols);
-                },
+                }
                 types::SectionType::DYNSYM => {
                     let strtab  = self.get_section_by_name(".dynstr").map(|s| {
                         match s.content {
@@ -443,16 +443,19 @@ impl Elf {
                     sec.content = SectionContent::Symbols(symbols);
                 },
                 types::SectionType::DYNAMIC => {
-                    let strtab  = self.get_section_by_name(".strtab").map(|s| {
-                        match s.content {
-                            SectionContent::Strings(ref s) => s.as_ref(),
-                            _ => unreachable!()
-                        }
-                    });
-                    let dynamics = Dynamic::from_reader(io, strtab, &self.header).unwrap();
+                    let dynamics = Dynamic::from_reader(io, &self).unwrap();
                     sec.content  = SectionContent::Dynamic(dynamics);
                 }
-                _ => {},
+                _ => {
+                    match sec.name.as_ref() {
+                        ".interp" => {
+                            let mut bb = vec![0; sec.header.size as usize];
+                            io.read(&mut bb)?;
+                            sec.content = SectionContent::Strings(String::from_utf8_lossy(&bb).into_owned());
+                        },
+                        _ => {}
+                    }
+                },
             }
         }
         self.sections = sections;
