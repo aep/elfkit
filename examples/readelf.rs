@@ -16,7 +16,8 @@ fn hextab<S>(align: usize, s:S) -> String where S: std::fmt::LowerHex {
 fn main() {
     let filename = env::args().nth(1).unwrap();
     let mut file = File::open(filename).unwrap();
-    let elf  = Elf::from_reader(&mut file).unwrap();
+    let mut elf  = Elf::from_reader(&mut file).unwrap();
+    elf.load_all().unwrap();
 
     println!("{}", "ELF Header:".bold());
     println!("  Magic:                             {:?}", elf.header.ident_magic);

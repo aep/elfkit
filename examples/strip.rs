@@ -17,6 +17,10 @@ fn main() {
     let mut out_file = OpenOptions::new().write(true).truncate(true).create(true).open(out_filename).unwrap();
 
     let mut in_elf  = Elf::from_reader(&mut in_file).unwrap();
+
+    //this isn't nessesary. we just do this to test the section parsers
+    in_elf.load_all().unwrap();
+
     let mut out_elf = Elf::default();
 
     out_elf.header.ident_class  = in_elf.header.ident_class;

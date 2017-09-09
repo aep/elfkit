@@ -1,3 +1,9 @@
+[![Build Status](https://travis-ci.org/aep/elfkit.svg?branch=master)](https://travis-ci.org/aep/elfkit)
+[![codecov](https://codecov.io/gh/aep/elfkit/branch/master/graph/badge.svg)](https://codecov.io/gh/aep/elfkit)
+[![crates.io](http://meritbadge.herokuapp.com/elfkit)](https://crates.io/crates/elfkit)
+[![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE-MIT)
+[![docs](https://docs.rs/elfkit/badge.svg)](https://docs.rs/elfkit)
+
 Elfkit
 =========
 
@@ -13,16 +19,46 @@ cargo run --example readelf ./tests/samples/amd64_exe
 ![screenshot](/examples/readelf-screenshot.png?raw=true)
 
 
+api design
+---------------------
+
+*low level*
+
+Every type implements from_reader and to_writer. You can use them invdividually,
+but you'll always need a Header to tell the de/serializers about things like endianness, bitwidth,..
+
+*structured elf*
+
+the most versatile api is propably Elf::from_reader/to_writer.
+You can use it as is, which will hold all sectionc content in Vec<u8> or call Elf::load_all() which will parse
+the sections into their detailed specific structures, such as symbols, relocations, dynamic linker instructions, etc..
+
+
 implementation status
 ---------------------
 
-by architecture
+section specific parsers
+
+| type         | read    | write   |
+|--------------|---------|---------|
+| symtab       | ok      | ok      |
+| rela         | ok      | ok      |
+| dynamic      | ok      | ok      |
+| rel          | -       | -       |
+| note         | -       | -       |
+| gnu_hash     | -       | -       |
+| versym       | -       | -       |
+| verneed      | -       | -       |
+
+architectures
 
 | abi          | headers | relocations | 
 |--------------|---------|-------------|
 | x86_64       | ok      | wip         |
 | mips32r2 o32 | ok      |             |
 | arm eabi     | ok      |             |
+
+
 
 
 references

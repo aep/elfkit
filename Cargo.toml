@@ -1,13 +1,23 @@
 [package]
 name = "elfkit"
-version = "0.1.0"
+version = "0.0.1"
 authors = ["Arvid E. Picciani <aep@exys.org>"]
+repository = "https://github.com/aep/elfkit"
+homepage   = "https://github.com/aep/elfkit"
+documentation = "https://docs.rs/elfkit"
+license = "MIT/Apache-2.0"
+description = """
+an elf parser and manipulation library in pure rust
+"""
+
+
 
 [dependencies]
 byteorder = "1"
 enum-primitive-derive = "0.1"
 num-traits = "^0.1"
-bitflags = { git = "https://github.com/rust-lang-nursery/bitflags.git" ,rev = "ec6ddd5" }
+bitflags = "1.0.0"
+#bitflags = { git = "https://github.com/rust-lang-nursery/bitflags.git" ,rev = "ec6ddd5" }
 
 
 [dev_dependencies]

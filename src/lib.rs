@@ -432,7 +432,6 @@ impl Elf {
                 ).into_owned();
         }
 
-        r.load_all()?;
         Ok(r)
     }
 
