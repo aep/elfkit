@@ -17,7 +17,14 @@ pub struct Dynamic {
 }
 
 impl Dynamic {
-    pub fn from_reader<R>(io: &mut R, strtab: Option<&str>,eh: &Header) -> Result<Vec<Dynamic>, Error> where R: Read {
+    pub fn from_reader<R>(mut io: R, linked: Option<&SectionContent>, eh: &Header) -> Result<SectionContent, Error> where R: Read{
+
+        let strtab = match linked {
+            None => None,
+            Some(&SectionContent::Raw(ref s)) => Some(s),
+            _ => return Err(Error::LinkedSectionIsNotStrings),
+        };
+
         let mut r = Vec::new();
 
         while let Ok(tag) = elf_read_uclass!(eh, io) {
@@ -37,7 +44,8 @@ impl Dynamic {
                         dhtype:  types::DynamicType::NEEDED,
                         content: DynamicContent::String(match strtab {
                             None => String::default(),
-                            Some(s) => s[val as usize ..].split('\0').next().unwrap_or("").to_owned()
+                            Some(s) => String::from_utf8_lossy(
+                                s[val as usize ..].split(|c|*c==0).next().unwrap_or(&[0;0])).into_owned(),
                         }),
                     });
                 },
@@ -50,15 +58,25 @@ impl Dynamic {
             };
         }
 
-        Ok(r)
+        Ok(SectionContent::Dynamic(r))
     }
-    pub fn to_writer<R>(&self, io: &mut R, eh: &Header) -> Result<(), Error> where R: Write {
-
+    pub fn to_writer<W>(&self, mut io: W, linked: Option<&mut SectionContent>, eh: &Header)
+        -> Result<(), Error> where W: Write {
         elf_write_uclass!(eh, io, self.dhtype.to_u64().unwrap())?;
 
         match self.content {
             DynamicContent::None => {elf_write_uclass!(eh, io, 0)?;},
-            DynamicContent::String(ref s) => {elf_write_uclass!(eh, io, 1/*FIXME*/)?;},
+            DynamicContent::String(ref s) => {
+                match linked {
+                    Some(&mut SectionContent::Raw(ref mut dynstr)) => {
+                        let off = dynstr.len() as u64;
+                        dynstr.extend(s.bytes());
+                        dynstr.extend(&[0;1]);
+                        elf_write_uclass!(eh, io, off)?;
+                    },
+                    _ => elf_write_uclass!(eh, io, 0)?,
+                }
+            },
             DynamicContent::Address(ref v) => {elf_write_uclass!(eh, io, *v)?;},
         }
         Ok(())

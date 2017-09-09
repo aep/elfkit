@@ -1,6 +1,6 @@
-use std::io::{Read};
-use {Error, Header, types};
-use num_traits::FromPrimitive;
+use std::io::{Read, Write};
+use {Error, Header, types, SectionContent};
+use num_traits::{FromPrimitive,ToPrimitive};
 
 #[derive(Debug, Default, Clone)]
 pub struct Symbol {
@@ -16,7 +16,7 @@ pub struct Symbol {
 
 impl Symbol {
     pub fn from_val(
-        tab: Option<&str>,
+        tab: Option<&Vec<u8>>,
         _name:   u32,
         info:   u8,
         other:  u8,
@@ -26,7 +26,8 @@ impl Symbol {
         ) -> Result<Symbol, Error> {
 
         let name  = match tab {
-            Some(s) => s[_name as usize ..].split('\0').next().unwrap_or("").to_owned(),
+            Some(s) => String::from_utf8_lossy(
+                s[_name as usize ..].split(|c|*c==0).next().unwrap_or(&[0;0])).into_owned(),
             None    => String::default(),
         };
 
@@ -42,7 +43,7 @@ impl Symbol {
             None => return Err(Error::InvalidSymbolBind(reb)),
         };
 
-        let reb = info & 0x3;
+        let reb = other & 0x3;
         let vis = match types::SymbolVis::from_u8(reb) {
             Some(v) => v,
             None => return Err(Error::InvalidSymbolVis(reb)),
@@ -59,9 +60,15 @@ impl Symbol {
             vis:   vis,
         })
     }
-    pub fn from_reader<R>(io: &mut R, tab: Option<&str>, eh: &Header) -> Result<Vec<Symbol>, Error> where R: Read {
-        let mut r = Vec::new();
+    pub fn from_reader<R>(mut io: R, linked: Option<&SectionContent>, eh: &Header) -> Result<SectionContent, Error> where R: Read{
 
+        let tab = match linked {
+            None => None,
+            Some(&SectionContent::Raw(ref s)) => Some(s),
+            _ => return Err(Error::LinkedSectionIsNotStrings),
+        };
+
+        let mut r = Vec::new();
         let mut b = vec![0; match eh.ident_class {
             types::Class::Class64 => 24,
             types::Class::Class32 => 16,
@@ -94,6 +101,40 @@ impl Symbol {
             })
         }
 
-        Ok(r)
+        Ok(SectionContent::Symbols(r))
     }
+
+    pub fn to_writer<W>(&self, mut io: W, linked: Option<&mut SectionContent>, eh: &Header)
+        -> Result<(), Error> where W: Write {
+
+            match linked {
+                Some(&mut SectionContent::Raw(ref mut strtab)) => {
+                    let off = strtab.len() as u32;
+                    strtab.extend(self.name.bytes());
+                    strtab.extend(&[0;1]);
+                    elf_write_u32!(eh, io, off)?;
+                },
+                _ => elf_write_u32!(eh, io, 0)?,
+            }
+
+
+            let info  = (self.bind.to_u8().unwrap() << 4) + (self.stype.to_u8().unwrap() & 0xf);
+            let other = self.vis.to_u8().unwrap();
+
+            match eh.ident_class {
+                types::Class::Class64 => {
+                    io.write(&[info, other]);
+                    elf_write_u16!(eh, io, self.shndx)?;
+                    elf_write_u64!(eh, io, self.value)?;
+                    elf_write_u64!(eh, io, self.size)?;
+                },
+                types::Class::Class32 => {
+                    elf_write_u32!(eh, io, self.value as u32)?;
+                    elf_write_u32!(eh, io, self.size as u32)?;
+                    io.write(&[info, other])?;
+                    elf_write_u16!(eh, io, self.shndx)?;
+                },
+            };
+            Ok(())
+        }
 }

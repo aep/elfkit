@@ -128,13 +128,13 @@ fn main() {
 
                 }
             },
-            SectionContent::Strings(ref s) => {
+            SectionContent::Raw(ref s) => {
                 match section.name.as_ref() {
                     ".interp" => {
                         println!("");
                         println!("{} program interpreter section at offset 0x{:x}:",
                                  section.name.bold(), section.header.offset);
-                        println!("  {}",s);
+                        println!("  {}",String::from_utf8_lossy(s));
                     },
                     _ => {}
                 }

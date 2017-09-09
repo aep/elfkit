@@ -37,7 +37,7 @@ pub enum Error {
     InvalidSymbolVis(u8),
     InvalidDynamicType(u64),
     MissingShstrtabSection,
-    LinkedSectionIsNotStrings(u32),
+    LinkedSectionIsNotStrings,
 }
 
 impl From<::std::io::Error> for Error {
@@ -337,11 +337,10 @@ impl SegmentHeader {
 #[derive(Clone)]
 pub enum SectionContent {
     None,
-    Strings(String),
+    Raw(Vec<u8>),
     Relocations(Vec<Relocation>),
     Symbols(Vec<Symbol>),
     Dynamic(Vec<Dynamic>),
-    Progbits(Vec<u8>),
 }
 
 impl Default for SectionContent{
@@ -392,23 +391,28 @@ impl Elf {
         // parse section headers
         r.sections.clear();
         io.seek(SeekFrom::Start(r.header.shoff))?;
+        let mut section_headers = Vec::new();
         for _ in 0..r.header.shnum {
-            let sh = SectionHeader::from_reader(io, &r.header)?;
-            r.sections.push(Section{
-                header: sh,
-                name: String::default(),
-                content: SectionContent::None,
-            });
+            section_headers.push(SectionHeader::from_reader(io, &r.header)?);
         }
 
-        //resolve all string tables
-        for ref mut sec in &mut r.sections {
-            if sec.header.shtype == types::SectionType::STRTAB {
-                io.seek(SeekFrom::Start(sec.header.offset))?;
-                let mut bb = vec![0; sec.header.size as usize];
-                io.read_exact(&mut bb)?;
-                sec.content = SectionContent::Strings(String::from_utf8_lossy(&bb).into_owned());
-            }
+        // read section content
+        for sh in section_headers {
+            r.sections.push(Section{
+                name: String::default(),
+                content: match sh.shtype {
+                    types::SectionType::NULL | types::SectionType::NOBITS => {
+                        SectionContent::None
+                    },
+                    _ => {
+                        io.seek(SeekFrom::Start(sh.offset))?;
+                        let mut bb = vec![0; sh.size as usize];
+                        io.read_exact(&mut bb)?;
+                        SectionContent::Raw(bb)
+                    }
+                },
+                header: sh,
+            });
         }
 
         // resolve section names
@@ -416,90 +420,141 @@ impl Elf {
             None => return Err(Error::MissingShstrtabSection),
             Some(sec) => {
                 match sec.content {
-                    SectionContent::Strings(ref s) => s,
+                    SectionContent::Raw(ref s) => s,
                     _ => return Err(Error::MissingShstrtabSection),
                 }
             }
         }.clone();
 
         for ref mut sec in &mut r.sections {
-            sec.name = shstrtab[sec.header.name as usize ..].split('\0').next().unwrap_or("").to_owned();
+            sec.name = String::from_utf8_lossy(
+                shstrtab[sec.header.name as usize ..].split(|e|*e==0).next().unwrap_or(&[0;0])
+                ).into_owned();
         }
 
-        r.load_all(io)?;
+        r.load_all()?;
         Ok(r)
     }
 
-    pub fn load_all<R>(&mut self, io: &mut R) -> Result<(), Error> where R: Read + Seek {
+    pub fn load_all(&mut self) -> Result<(), Error> {
 
-        let mut sections = self.sections.to_vec();
-        for ref mut sec in &mut sections {
-            io.seek(SeekFrom::Start(sec.header.offset))?;
-            let io = &mut io.take(sec.header.size);
+        let mut change = Vec::new();
+        for (i, sec) in self.sections.iter().enumerate() {
+            let linked = self.sections.get(sec.header.link as usize).map(|s|&s.content);
+            if let SectionContent::Raw(ref raw) = sec.content {
+                let mut io = &raw[..];
+                match sec.header.shtype {
+                    types::SectionType::RELA    =>
+                        change.push((i,Relocation::from_reader(io, linked, &self.header)?)),
+                    types::SectionType::SYMTAB | types::SectionType::DYNSYM =>
+                        change.push((i,Symbol::from_reader(io, linked, &self.header)?)),
+                    types::SectionType::DYNAMIC =>
+                        change.push((i,Dynamic::from_reader(io, linked, &self.header)?)),
+                    _ => {},
+                };
+            };
+        };
+        for (i, content) in change {
+            self.sections[i].content = content;
+        }
 
-            match sec.header.shtype {
-                types::SectionType::RELA => {
-                    let relocs = Relocation::from_reader(io, &self.header)?;
-                    sec.content = SectionContent::Relocations(relocs);
+
+        Ok(())
+    }
+
+    fn insert_dynstr(&mut self) -> u32 {
+        self.sections.push(Section{
+            name: String::from(".dynstr"),
+            header: SectionHeader {
+                name:       0,
+                shtype:     types::SectionType::STRTAB,
+                flags:      types::SectionFlags::ALLOC,
+                addr:       0,//FIXME: this needs to be loaded somewhere,
+                offset:     0,
+                size:       0,
+                link:       0,
+                info:       0,
+                addralign:  1,
+                entsize:    0,
+            },
+            content: SectionContent::Raw(Vec::new()),
+        });
+        self.sections.len() as u32 -1
+    }
+
+    pub fn store_all(&mut self) -> Result<(), Error> {
+        let mut sections = std::mem::replace(&mut self.sections, Vec::new());
+        sections.retain(|s|s.header.shtype != types::SectionType::STRTAB);
+
+        let mut dynstrindex = 0;
+
+        for mut sec in sections {
+            match sec.content {
+                SectionContent::None   => self.sections.push(sec),
+                SectionContent::Raw(_) => self.sections.push(sec),
+                SectionContent::Relocations(vv) => {
+                    let mut raw = Vec::new();
+                    for v in vv {
+                        v.to_writer(&mut raw, None, &self.header)?;
+                    }
+                    //TODO entsize
+                    //TODO link field pointer will be wrong
+                    sec.header.link = dynstrindex;
+                    sec.content = SectionContent::Raw(raw);
+                    self.sections.push(sec)
                 },
-                types::SectionType::SYMTAB => {
-                    let strtab  = match self.sections.get(sec.header.link as usize) {
-                        None => return Err(Error::LinkedSectionIsNotStrings(sec.header.link)),
-                        Some(ref strsec) => match strsec.content {
-                            SectionContent::Strings(ref s) => s.as_ref(),
-                            _ => return Err(Error::LinkedSectionIsNotStrings(sec.header.link)),
+                SectionContent::Symbols(vv) => {
+                    //TODO only goes in dynstr if section is alloc
+                    if dynstrindex == 0 {
+                        dynstrindex = self.insert_dynstr();
+                    }
+
+                    let mut raw = Vec::new();
+                    {
+                        let dynstr = &mut self.sections[dynstrindex as usize].content;
+                        for v in vv {
+                            v.to_writer(&mut raw, Some(dynstr), &self.header)?;
                         }
-                    };
-                    let symbols = Symbol::from_reader(io, Some(strtab), &self.header).unwrap();
-                    sec.content = SectionContent::Symbols(symbols);
-                }
-                types::SectionType::DYNSYM => {
-                    let strtab  = match self.sections.get(sec.header.link as usize) {
-                        None => return Err(Error::LinkedSectionIsNotStrings(sec.header.link)),
-                        Some(ref strsec) => match strsec.content {
-                            SectionContent::Strings(ref s) => s.as_ref(),
-                            _ => return Err(Error::LinkedSectionIsNotStrings(sec.header.link)),
-                        }
-                    };
-                    let symbols = Symbol::from_reader(io, Some(strtab), &self.header).unwrap();
-                    sec.content = SectionContent::Symbols(symbols);
+                    }
+
+                    //TODO entsize and allocation address
+                    sec.header.link = dynstrindex;
+                    sec.content = SectionContent::Raw(raw);
+                    self.sections.push(sec)
                 },
-                types::SectionType::DYNAMIC => {
-                    let strtab  = match self.sections.get(sec.header.link as usize) {
-                        None => return Err(Error::LinkedSectionIsNotStrings(sec.header.link)),
-                        Some(ref strsec) => match strsec.content {
-                            SectionContent::Strings(ref s) => s.as_ref(),
-                            _ => return Err(Error::LinkedSectionIsNotStrings(sec.header.link)),
+                SectionContent::Dynamic(vv) => {
+                    //TODO only goes in dynstr if section is alloc
+                    if dynstrindex == 0 {
+                        dynstrindex = self.insert_dynstr();
+                    }
+
+                    let mut raw = Vec::new();
+                    {
+                        let dynstr = &mut self.sections[dynstrindex as usize].content;
+                        for v in vv {
+                            v.to_writer(&mut raw, Some(dynstr), &self.header)?;
                         }
-                    };
-                    let dynamics = Dynamic::from_reader(io, Some(strtab), &self.header).unwrap();
-                    sec.content  = SectionContent::Dynamic(dynamics);
-                }
-                types::SectionType::PROGBITS => {
-                    let mut bb = vec![0; sec.header.size as usize];
-                    io.read_exact(&mut bb)?;
-                    sec.content = SectionContent::Progbits(bb);
-                }
-                _ => {},
+                    }
+
+                    //TODO entsize and allocation address
+                    sec.header.link = dynstrindex;
+                    sec.content = SectionContent::Raw(raw);
+                    self.sections.push(sec)
+                },
             }
         }
-        self.sections = sections;
 
+        //let mut stringtables = Vec::new();
         Ok(())
     }
 
-    pub fn write_start<R>(&mut self, io: &mut R) -> Result<(), Error> where R: Write + Seek {
+    pub fn to_writer<R>(&mut self, io: &mut R) -> Result<(), Error> where R: Write + Seek {
+
+        self.store_all()?;
+
         io.seek(SeekFrom::Start(0))?;
-        let off = self.header.size();
+        let mut off = self.header.size();
         io.write(&vec![0;off])?;
-        Ok(())
-    }
-
-    pub fn write_end<R>(&mut self, io: &mut R) -> Result<(), Error> where R: Write + Seek {
-        let mut off = io.seek(SeekFrom::Current(0))? as usize;
-
-        // remove all string sections. they'll be rebuilt
-        self.sections.retain(|s|s.header.shtype != types::SectionType::STRTAB);
 
         //segments
         if self.segments.len() > 0 {
@@ -523,7 +578,6 @@ impl Elf {
             inoff += sec.name.len() + 1;
         }
 
-
         self.sections.push(Section{
             header: SectionHeader {
                 name:       0,
@@ -538,32 +592,20 @@ impl Elf {
                 entsize:    0,
             },
             name: String::from(".shstrtab"),
-            content: SectionContent::Strings(shstrtab),
+            content: SectionContent::Raw(shstrtab.into_bytes()),
         });
         self.header.shstrndx = self.sections.len() as u16 - 1;
 
-
         //sections
-
         let mut sections = self.sections.to_vec();
         for sec in &mut sections {
             off = io.seek(SeekFrom::Current(0))? as usize;
             sec.header.offset = off as u64;
             match sec.content {
-                SectionContent::None => {},
-                SectionContent::Strings(ref v) => {
+                SectionContent::Raw(ref v) => {
                     io.write(&v.as_ref())?;
                 }
-                SectionContent::Progbits(ref v) => {
-                    io.write(&v)?;
-                }
-                SectionContent::Relocations(ref v) => {},
-                SectionContent::Symbols(ref v) => {},
-                SectionContent::Dynamic(ref v) => {
-                    for dyn in v {
-                        dyn.to_writer(io, &self.header);
-                    }
-                },
+                _ => {},
             }
             let at = io.seek(SeekFrom::Current(0))? as usize;
             sec.header.size = (at - off) as u64;

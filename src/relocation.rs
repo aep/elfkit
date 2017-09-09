@@ -1,7 +1,7 @@
-use std::io::{Read};
-use {Header, Error};
+use std::io::{Read, Write};
+use {Header, Error, SectionContent};
 use types;
-use num_traits::FromPrimitive;
+use num_traits::{FromPrimitive, ToPrimitive};
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Primitive, PartialEq, Clone)]
@@ -54,7 +54,7 @@ pub struct Relocation {
 }
 
 impl Relocation {
-    pub fn from_reader<R>(io: &mut R, eh: &Header) -> Result<Vec<Relocation>, Error> where R: Read {
+    pub fn from_reader<R>(mut io: R, linked: Option<&SectionContent>, eh: &Header) -> Result<SectionContent, Error> where R: Read{
         if eh.machine != types::Machine::X86_64 {
             return Err(Error::UnsupportedMachineTypeForRelocation);
         }
@@ -81,6 +81,19 @@ impl Relocation {
             });
         }
 
-        Ok(r)
+        Ok(SectionContent::Relocations(r))
     }
+
+    pub fn to_writer<W>(&self, mut io: W, linked: Option<&mut SectionContent>, eh: &Header)
+        -> Result<(), Error> where W: Write {
+
+            elf_write_u64!(eh, io, self.addr)?;
+
+            let info = (self.sym.to_u64().unwrap() << 32) + self.rtype.to_u64().unwrap();
+            elf_write_u64!(eh, io, info)?;
+
+            elf_write_u64!(eh, io, self.addend as u64)?;
+
+            Ok(())
+        }
 }

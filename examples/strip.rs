@@ -27,7 +27,6 @@ fn main() {
     //out_elf.segments = in_elf.segments.clone();
     out_elf.sections = in_elf.sections.clone();
 
-    out_elf.write_start(&mut out_file);
-    out_elf.write_end(&mut out_file);
+    out_elf.to_writer(&mut out_file).unwrap();
 }
 
