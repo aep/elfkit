@@ -1,6 +1,7 @@
 use std::io::{Read, Write};
 use {Error, Header, types, SectionContent};
 use num_traits::{FromPrimitive,ToPrimitive};
+use utils::find_or_add_to_strtab;
 
 #[derive(Debug, Default, Clone)]
 pub struct Symbol {
@@ -15,7 +16,9 @@ pub struct Symbol {
 }
 
 impl Symbol {
-    pub fn from_val(
+
+
+    fn from_val(
         tab: Option<&Vec<u8>>,
         _name:   u32,
         info:   u8,
@@ -60,6 +63,14 @@ impl Symbol {
             vis:   vis,
         })
     }
+
+    pub fn entsize(eh: &Header) ->  usize {
+        match eh.ident_class {
+            types::Class::Class64 => 24,
+            types::Class::Class32 => 16,
+        }
+    }
+
     pub fn from_reader<R>(mut io: R, linked: Option<&SectionContent>, eh: &Header) -> Result<SectionContent, Error> where R: Read{
 
         let tab = match linked {
@@ -69,10 +80,7 @@ impl Symbol {
         };
 
         let mut r = Vec::new();
-        let mut b = vec![0; match eh.ident_class {
-            types::Class::Class64 => 24,
-            types::Class::Class32 => 16,
-        }];
+        let mut b = vec![0; Self::entsize(eh)];
         while io.read(&mut b)? > 0 {
             let mut br = &b[..];
             let _name  = elf_read_u32!(eh, br)?;
@@ -109,9 +117,7 @@ impl Symbol {
 
             match linked {
                 Some(&mut SectionContent::Raw(ref mut strtab)) => {
-                    let off = strtab.len() as u32;
-                    strtab.extend(self.name.bytes());
-                    strtab.extend(&[0;1]);
+                    let off = find_or_add_to_strtab(strtab, self.name.bytes().collect()) as u32;
                     elf_write_u32!(eh, io, off)?;
                 },
                 _ => elf_write_u32!(eh, io, 0)?,
@@ -123,7 +129,7 @@ impl Symbol {
 
             match eh.ident_class {
                 types::Class::Class64 => {
-                    io.write(&[info, other]);
+                    io.write(&[info, other])?;
                     elf_write_u16!(eh, io, self.shndx)?;
                     elf_write_u64!(eh, io, self.value)?;
                     elf_write_u64!(eh, io, self.size)?;

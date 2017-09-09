@@ -21,6 +21,44 @@ pub trait ElfEndianReadExt: Read {
 impl<R: Read + ?Sized> ElfEndianReadExt for R {}
 
 
+#[test]
+fn test_find_or_add_to_strtab() {
+    let mut strtab = vec![0,3,4,5,6,0,3,2,0];
+    let pos = find_or_add_to_strtab(&mut strtab, vec![3,2]);
+    assert_eq!(pos, 6);
+
+    let pos = find_or_add_to_strtab(&mut strtab, vec![3,3]);
+    assert_eq!(pos, 9);
+
+    let pos = find_or_add_to_strtab(&mut strtab, vec![]);
+    assert_eq!(pos, 0);
+}
+
+
+pub fn find_or_add_to_strtab(strtab: &mut Vec<u8>, mut ns: Vec<u8>) -> usize {
+    ns.extend(&[0;1]);
+
+    let mut nn = 0;
+    for i in 0..strtab.len() {
+        if strtab[i] == ns[nn] {
+            nn += 1;
+            if nn >= ns.len() {
+                if ns.len() == 1 {
+                    return i;
+                } else {
+                    return i - ns.len() + 1;
+                }
+            }
+        } else {
+            nn = 0;
+        }
+    }
+
+    let l = strtab.len();
+    strtab.extend(ns);
+    return l;
+}
+
 
 //adapted from https://github.com/cole14/rust-elf/blob/master/src/utils.rs
 

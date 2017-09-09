@@ -54,7 +54,16 @@ pub struct Relocation {
 }
 
 impl Relocation {
-    pub fn from_reader<R>(mut io: R, linked: Option<&SectionContent>, eh: &Header) -> Result<SectionContent, Error> where R: Read{
+
+
+    pub fn entsize(eh: &Header) -> usize {
+        match eh.machine {
+            types::Machine::X86_64 => 3 * 8,
+            _ => 0
+        }
+    }
+
+    pub fn from_reader<R>(mut io: R, _: Option<&SectionContent>, eh: &Header) -> Result<SectionContent, Error> where R: Read{
         if eh.machine != types::Machine::X86_64 {
             return Err(Error::UnsupportedMachineTypeForRelocation);
         }
@@ -84,7 +93,7 @@ impl Relocation {
         Ok(SectionContent::Relocations(r))
     }
 
-    pub fn to_writer<W>(&self, mut io: W, linked: Option<&mut SectionContent>, eh: &Header)
+    pub fn to_writer<W>(&self, mut io: W, _: Option<&mut SectionContent>, eh: &Header)
         -> Result<(), Error> where W: Write {
 
             elf_write_u64!(eh, io, self.addr)?;

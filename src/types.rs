@@ -180,7 +180,6 @@ impl Default for Class {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SectionType(pub u32);
-
 impl SectionType {
     /// Section header table entry unused
     pub const NULL                : SectionType = SectionType(0);
@@ -226,9 +225,9 @@ impl SectionType {
     pub const GNU_LIBLIST         : SectionType = SectionType(0x6ffffff7);
     /// Checksum for DSO content
     pub const CHECKSUM            : SectionType = SectionType(0x6ffffff8);
-    pub const SUNW_move           : SectionType = SectionType(0x6ffffffa);
+    pub const SUNW_MOVE           : SectionType = SectionType(0x6ffffffa);
     pub const SUNW_COMDAT         : SectionType = SectionType(0x6ffffffb);
-    pub const SUNW_syminfo        : SectionType = SectionType(0x6ffffffc);
+    pub const SUNW_SYMINFO        : SectionType = SectionType(0x6ffffffc);
     /// Version definition section
     pub const GNU_VERDEF          : SectionType = SectionType(0x6ffffffd);
     /// Version needs section
@@ -280,9 +279,9 @@ impl SectionType {
             (_,&SectionType::GNU_HASH       )  => Some("GNU_HASH"),
             (_,&SectionType::GNU_LIBLIST    )  => Some("GNU_LIBLIST"),
             (_,&SectionType::CHECKSUM       )  => Some("CHECKSUM"),
-            (_,&SectionType::SUNW_move      )  => Some("SUNW_move"),
+            (_,&SectionType::SUNW_MOVE      )  => Some("SUNW_move"),
             (_,&SectionType::SUNW_COMDAT    )  => Some("SUNW_COMDAT"),
-            (_,&SectionType::SUNW_syminfo   )  => Some("SUNW_syminfo"),
+            (_,&SectionType::SUNW_SYMINFO   )  => Some("SUNW_syminfo"),
             (_,&SectionType::GNU_VERDEF     )  => Some("GNU_VERDEF"),
             (_,&SectionType::GNU_VERNEED    )  => Some("GNU_VERNEED"),
             (_,&SectionType::GNU_VERSYM     )  => Some("GNU_VERSYM"),

@@ -2,6 +2,7 @@ use std::io::{Read, Write};
 use {Header, Error, SectionContent};
 use types;
 use num_traits::{FromPrimitive, ToPrimitive};
+use utils::find_or_add_to_strtab;
 
 #[derive(Debug, Clone)]
 pub enum DynamicContent {
@@ -17,6 +18,14 @@ pub struct Dynamic {
 }
 
 impl Dynamic {
+
+    pub fn entsize(eh: &Header) ->  usize {
+        match eh.ident_class {
+            types::Class::Class64 => 16,
+            types::Class::Class32 => 8,
+        }
+    }
+
     pub fn from_reader<R>(mut io: R, linked: Option<&SectionContent>, eh: &Header) -> Result<SectionContent, Error> where R: Read{
 
         let strtab = match linked {
@@ -69,9 +78,7 @@ impl Dynamic {
             DynamicContent::String(ref s) => {
                 match linked {
                     Some(&mut SectionContent::Raw(ref mut dynstr)) => {
-                        let off = dynstr.len() as u64;
-                        dynstr.extend(s.bytes());
-                        dynstr.extend(&[0;1]);
+                        let off = find_or_add_to_strtab(dynstr, s.bytes().collect()) as u64;
                         elf_write_uclass!(eh, io, off)?;
                     },
                     _ => elf_write_uclass!(eh, io, 0)?,

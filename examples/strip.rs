@@ -23,9 +23,12 @@ fn main() {
     out_elf.header.ident_abi    = in_elf.header.ident_abi;
     out_elf.header.etype        = in_elf.header.etype;
     out_elf.header.machine      = in_elf.header.machine;
+    out_elf.header.entry        = in_elf.header.entry;
 
-    //out_elf.segments = in_elf.segments.clone();
-    out_elf.sections = in_elf.sections.clone();
+    out_elf.segments = in_elf.segments.clone();
+    out_elf.sections = in_elf.sections.drain(..).filter(|sec|{
+        !sec.name.starts_with(".debug")
+    }).collect();
 
     out_elf.to_writer(&mut out_file).unwrap();
 }
