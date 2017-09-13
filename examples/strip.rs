@@ -1,14 +1,8 @@
 extern crate elfkit;
-extern crate colored;
 
 use std::env;
 use std::fs::OpenOptions;
-use elfkit::{Elf,Section,SectionHeader,SectionContent};
-use elfkit::relocation::{Relocation};
-use elfkit::symbol::{Symbol};
-use elfkit::types;
-use std::io::{Read, Seek, SeekFrom, copy};
-use colored::*;
+use elfkit::{Elf,types};
 
 fn main() {
     let in_filename  = env::args().nth(1).unwrap();
@@ -18,7 +12,9 @@ fn main() {
 
     let mut in_elf  = Elf::from_reader(&mut in_file).unwrap();
 
-    //this isn't nessesary. we just do this to test the section parsers
+    // de/serialize all known section types to detailed representation
+    // this isn't nessesary for strip, because it never touches the section content
+    // we just do this for demonstration purposes
     in_elf.load_all().unwrap();
 
     let mut out_elf = Elf::default();
@@ -30,9 +26,14 @@ fn main() {
     out_elf.header.entry        = in_elf.header.entry;
 
     out_elf.segments = in_elf.segments.clone();
-    out_elf.sections = in_elf.sections.drain(..).filter(|sec|{
-        !sec.name.starts_with(".debug")
-    }).collect();
+
+    // sections which do not have an ALLOC flag aren't needed by the dynamic linker
+    // but also keep the first NULL section for padding
+    // out_elf.sections = in_elf.sections.drain(..).filter(|sec|{
+    //     sec.header.flags.contains(types::SectionFlags::ALLOC) ||
+    //     sec.header.shtype == types::SectionType::NULL
+    // }).collect();
+    out_elf.sections = in_elf.sections;
 
     out_elf.to_writer(&mut out_file).unwrap();
 }

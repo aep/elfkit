@@ -39,6 +39,7 @@ pub enum Error {
     InvalidDynamicType(u64),
     MissingShstrtabSection,
     LinkedSectionIsNotStrings,
+    InvalidDynamicFlags1(u64),
 }
 
 impl From<::std::io::Error> for Error {
@@ -273,6 +274,13 @@ pub struct SegmentHeader {
 }
 
 impl SegmentHeader {
+    pub fn entsize(eh: &Header) ->  usize {
+        match eh.ident_class {
+            types::Class::Class64 => 4 + 4 + 6 * 8,
+            types::Class::Class32 => 4 + 4 + 6 * 4,
+        }
+    }
+
     pub fn from_reader<R>(io: &mut R, eh: &Header) -> Result<SegmentHeader, Error> where R: Read {
         let mut r = SegmentHeader::default();
         let mut b = vec![0; eh.phentsize as usize];
@@ -355,6 +363,17 @@ pub struct Section {
     pub content: SectionContent,
 }
 
+
+impl Section {
+    pub fn size(&self) -> usize {
+        match self.content {
+            SectionContent::None => 0,
+            SectionContent::Raw(ref v) => v.len(),
+            _ => panic!("tried to size a section that isn't serialized"),
+        }
+    }
+}
+
 pub struct Elf {
     pub header:   Header,
     pub segments: Vec<SegmentHeader>,
@@ -369,7 +388,8 @@ impl Default for Elf {
             sections: Vec::default(),
         };
         //always prepend a null section. i don't know yet why, but this is what everyone does.
-        r.sections.insert(0, Section::default());
+        //TODO this is part of the linker?
+        //r.sections.insert(0, Section::default());
         r
     }
 }
@@ -475,6 +495,7 @@ macro_rules!  insert_stuff_with_strtab{
 
             }
             $sec.header.entsize = $size;
+            $sec.header.size = raw.len() as u64;
             $sec.content = SectionContent::Raw(raw);
             $rawsecs.insert($i, $sec)
         }
@@ -556,6 +577,11 @@ impl Elf {
             }
         }
 
+        //correct sizes
+        for (_,sec) in  &mut rawsecs {
+            match sec.content { SectionContent::Raw(ref v)  => sec.header.size = v.len() as u64, _ => {},};
+        }
+
         for i in 0..secnums {
             if let Some(mut sec) = parsecs.remove(&i) {
                 match sec.content {
@@ -565,6 +591,7 @@ impl Elf {
                             v.to_writer(&mut raw, None, &self.header)?;
                         }
                         sec.header.entsize = Relocation::entsize(&self.header) as u64;
+                        sec.header.size = raw.len() as u64;
                         sec.content = SectionContent::Raw(raw);
                         rawsecs.insert(i, sec);
                     },
@@ -585,30 +612,6 @@ impl Elf {
             }
         }
 
-        //let mut stringtables = Vec::new();
-        Ok(())
-    }
-
-    pub fn to_writer<R>(&mut self, io: &mut R) -> Result<(), Error> where R: Write + Seek {
-
-        self.store_all()?;
-
-        io.seek(SeekFrom::Start(0))?;
-        let mut off = self.header.size();
-        io.write(&vec![0;off])?;
-
-        //segments
-        if self.segments.len() > 0 {
-            self.header.phoff = off as u64;
-            for seg in &self.segments {
-                seg.to_writer(&self.header, io)?;
-            }
-            let at = io.seek(SeekFrom::Current(0))? as usize;
-            self.header.phnum       = self.segments.len() as u16;
-            self.header.phentsize   = ((at - off)/ self.segments.len()) as u16;
-            off = at;
-        }
-
         //shstrtab
         let mut shstrtab = String::from(".shstrtab\0");
         let mut inoff = shstrtab.len();
@@ -627,7 +630,7 @@ impl Elf {
                 flags:      types::SectionFlags::from_bits_truncate(0),
                 addr:       0,
                 offset:     0,
-                size:       0,
+                size:       shstrtab.len() as u64,
                 link:       0,
                 info:       0,
                 addralign:  0,
@@ -637,6 +640,48 @@ impl Elf {
             content: SectionContent::Raw(shstrtab.into_bytes()),
         });
         self.header.shstrndx = self.sections.len() as u16 - 1;
+
+        Ok(())
+    }
+
+    // at this point we assume the following state for all sections:
+    //  - content is raw
+    //  - header.size is correct
+    //
+    pub fn relayout(&mut self, pstart: u64, vstart: u64) -> Result<(), Error> {
+        //calculate addresses and offsets
+        let mut poff = pstart;
+        let mut voff = vstart;
+
+        for sec in &mut self.sections {
+            sec.header.offset   = poff;
+            sec.header.addr     = voff;
+            poff += sec.size() as u64;
+            voff += sec.header.size;
+        };
+
+        Ok(())
+    }
+
+    pub fn to_writer<R>(&mut self, io: &mut R) -> Result<(), Error> where R: Write + Seek {
+
+        io.seek(SeekFrom::Start(0))?;
+        let mut off = self.header.size();
+        io.write(&vec![0;off])?;
+
+        // segment headers
+        // MUST be written before section content, because it MUST be in the first LOAD
+        // otherwise the kernel passes an invalid aux vector
+        if self.segments.len() > 0 {
+            self.header.phoff = off as u64;
+            for seg in &self.segments {
+                seg.to_writer(&self.header, io)?;
+            }
+            let at = io.seek(SeekFrom::Current(0))? as usize;
+            self.header.phnum       = self.segments.len() as u16;
+            self.header.phentsize   = ((at - off)/ self.segments.len()) as u16;
+            off = at;
+        }
 
         //sections
         let mut sections = self.sections.to_vec();
@@ -675,6 +720,7 @@ impl Elf {
 
 
         //section headers
+
         let mut off = io.seek(SeekFrom::Current(0))? as usize;
         self.header.shoff = off as u64;
         for sec in &self.sections {
@@ -684,6 +730,8 @@ impl Elf {
         self.header.shnum       = self.sections.len() as u16;
         self.header.shentsize   = ((at - off)/ self.sections.len()) as u16;
         off = at;
+
+
 
         //hygene
         self.header.ehsize = self.header.size() as u16;

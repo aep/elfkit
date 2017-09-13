@@ -9,6 +9,7 @@ pub enum DynamicContent {
     None,
     String(String),
     Address(u64),
+    Flags1(types::DynamicFlags1)
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +59,15 @@ impl Dynamic {
                         }),
                     });
                 },
+                Some(types::DynamicType::FLAGS_1) => {
+                    r.push(Dynamic{
+                        dhtype:  types::DynamicType::FLAGS_1,
+                        content: DynamicContent::Flags1(match types::DynamicFlags1::from_bits(val) {
+                            Some(v) => v,
+                            None => return Err(Error::InvalidDynamicFlags1(val)),
+                        }),
+                    });
+                },
                 Some(x) => {
                     r.push(Dynamic{
                         dhtype:  x,
@@ -85,6 +95,7 @@ impl Dynamic {
                 }
             },
             DynamicContent::Address(ref v) => {elf_write_uclass!(eh, io, *v)?;},
+            DynamicContent::Flags1(ref v) => {elf_write_uclass!(eh, io, v.bits())?;}
         }
         Ok(())
     }

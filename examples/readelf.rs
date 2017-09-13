@@ -44,7 +44,6 @@ fn main() {
     println!("  [Nr] Name             Type           Address          Offset   Size     EntS Flg Lnk Inf Al");
 
     for (i, section) in elf.sections.iter().enumerate() {
-
         println!("  [{:>2}] {:<16.16} {} {} {} {} {} {:<3} {:<3.3} {:<3} {:<2.2}",
                  i, section.name.bold(),
                  match section.header.shtype.typename(&elf.header) {
@@ -79,6 +78,65 @@ fn main() {
         println!("                 0x{} 0x{} {:<6} 0x{:x}",
                  hextab(16, ph.filesz), hextab(16, ph.memsz), ph.flags,  ph.align);
     }
+    println!("");
+    println!("{}:", "File Layout".bold());
+
+
+    let mut fls = vec![
+        ("elf header",      0, elf.header.ehsize as u64),
+        ("section headers", elf.header.shoff, (elf.header.shentsize * elf.header.shnum) as u64),
+        ("segment headers", elf.header.phoff, (elf.header.phentsize * elf.header.phnum) as u64),
+    ];
+
+    for section in elf.sections.iter() {
+        if section.header.size < 1 {
+            continue;
+        }
+        fls.push((&section.name, section.header.offset,
+                  if section.header.shtype == types::SectionType::NOBITS {0} else {section.header.size}
+                  ));
+    }
+
+    fls.sort_by(|&(_,a,_),&(_,b,_)| a.cmp(&b));
+
+    println!("{}", "                     offset     size     segment".bold());
+    for n in 0..12 {
+        let n = n;
+        print!(        "                                         ");
+        for segment in elf.segments.iter() {
+            let name = format!("{:?}", segment.phtype);
+            print!(" {} |", if name.len() > n {&name[n..n+1]} else {" "});
+        }
+        println!("");
+    }
+    print!("                                         ");
+    for segment in elf.segments.iter() {
+        print!("---|")
+    }
+    println!("");
+
+
+
+    for (name, off, size) in fls {
+        print!("  {}   0x{:<6.6x}   0x{:<6.6x} ", format!("{:<16.16}", name).bold(), off, size);
+
+        for segment in elf.segments.iter() {
+            if off >= segment.offset && (off + size) <= (segment.offset + segment.filesz) {
+                if segment.flags.contains(types::SegmentFlags::EXECUTABLE) {
+                    print!("{:^3}|", format!("{}",segment.flags).green())
+                } else if segment.flags.contains(types::SegmentFlags::WRITABLE) {
+                    print!("{:^3}|", format!("{}",segment.flags).red())
+                } else {
+                    print!("{:^3}|", format!("{}",segment.flags));
+                }
+            } else {
+                print!("   |");
+            }
+        }
+        println!("");
+    }
+
+
 
     for section in &elf.sections {
         match section.content {
@@ -125,6 +183,7 @@ fn main() {
                         DynamicContent::None  => String::default(),
                         DynamicContent::String(ref s)  => s.clone(),
                         DynamicContent::Address(u) => hextab(16, u),
+                        DynamicContent::Flags1(v)  => format!("{:?}", v),
                     });
 
                 }

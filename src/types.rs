@@ -125,11 +125,11 @@ bitflags! {
         ///the o32 abi made 64 by some undocumented gnu stuff (i sincerely hope this isn't in use)
         const MIPS_ABI_O64      = 0x00002000;
 
-        const ARM_EABI_VER1	        = 0x01000000;
-        const ARM_EABI_VER2	        = 0x02000000;
-        const ARM_EABI_VER3	        = 0x03000000;
-        const ARM_EABI_VER4	        = 0x04000000;
-        const ARM_EABI_VER5	        = 0x05000000;
+        const ARM_EABI_VER1            = 0x01000000;
+        const ARM_EABI_VER2            = 0x02000000;
+        const ARM_EABI_VER3            = 0x03000000;
+        const ARM_EABI_VER4            = 0x04000000;
+        const ARM_EABI_VER5            = 0x05000000;
         const ARM_ABI_FLOAT_HARD    = 0x00000400;
         const ARM_ABI_FLOAT_SOFT    = 0x00000200;
     }
@@ -236,7 +236,7 @@ impl SectionType {
     pub const GNU_VERSYM          : SectionType = SectionType(0x6fffffff);
 
     //arm
-    pub const ARM_EXIDX		      : SectionType = SectionType(0x70000001);
+    pub const ARM_EXIDX              : SectionType = SectionType(0x70000001);
     pub const ARM_PREEMPTMAP      : SectionType = SectionType(0x70000002);
     pub const ARM_ATTRIBUTES      : SectionType = SectionType(0x70000003);
     pub const ARM_DEBUGOVERLAY    : SectionType = SectionType(0x70000004);
@@ -291,7 +291,7 @@ impl SectionType {
             (&Machine::MIPS, &SectionType::MIPS_UCODE       ) => Some("MIPS_UCODE"),
             (&Machine::MIPS, &SectionType::MIPS_DEBUG       ) => Some("MIPS_DEBUG"),
             (&Machine::MIPS, &SectionType::MIPS_REGINFO     ) => Some("MIPS_REGINFO"),
-            (&Machine::ARM, &SectionType::ARM_EXIDX		    ) => Some("ARM_EXIDX"),
+            (&Machine::ARM, &SectionType::ARM_EXIDX            ) => Some("ARM_EXIDX"),
             (&Machine::ARM, &SectionType::ARM_PREEMPTMAP    ) => Some("ARM_PREEMPTMAP"),
             (&Machine::ARM, &SectionType::ARM_ATTRIBUTES    ) => Some("ARM_ATTRIBUTES"),
             (&Machine::ARM, &SectionType::ARM_DEBUGOVERLAY  ) => Some("ARM_DEBUGOVERLAY"),
@@ -965,3 +965,69 @@ pub enum DynamicType {
 impl Default for DynamicType {
     fn default() -> Self {DynamicType::NULL}
 }
+
+
+
+// docs text from https://git.kindwolf.org/elfwalk/blob/master/elfwalk
+bitflags! {
+#[derive(Default)]
+    pub struct DynamicFlags1: u64 {
+            ///perform complete relocation processing
+            const NOW       = 1 << 0;
+            ///set RTLD_GLOBAL for this object
+            const GLOBAL    = 1 << 1;
+            ///indicate object is a member of a group
+            const GROUP     = 1 << 2;
+            ///object cannot be deleted from a process
+            const NODELETE  = 1 << 3;
+            ///ensure immediate loading of filtees
+            const LOADFLTR  = 1 << 4;
+            ///object's initialization occurs first
+            const INITFIRST = 1 << 5;
+            ///object cannot be used with dlopen()
+            const NOOPEN    = 1 << 6;
+            ///$ORIGIN processing required
+            const ORIGIN    = 1 << 7;
+            ///direct bindings enabled
+            const DIRECT    = 1 << 8;
+            ///meaning unknown / undefined
+            const TRANS     = 1 << 9;
+            ///object is an interposer
+            const INTERPOSE = 1 << 10;
+            ///ignore the default library search path
+            const NODEFLIB  = 1 << 11;
+            ///object cannot be dumped with dldump()
+            const NODUMP    = 1 << 12;
+            ///object is a configuration alternative
+            const CONFALT   = 1 << 13;
+            ///filtee terminates filter's search
+            const ENDFILTEE = 1 << 14;
+            ///displacement relocation has been carried out at build time
+            const DISPRELDNE= 1 << 15;
+            ///displacement relocation pending (to be applied at run-time)
+            const DISPRELPND= 1 << 16;
+            ///object contains non-direct bindings
+            const NODIRECT  = 1 << 17;
+            ///internal use
+            const IGNMULDEF = 1 << 18;
+            ///internal use
+            const NOKSYMS   = 1 << 19;
+            ///internal use
+            const NOHDR     = 1 << 20;
+            ///object has been modified since originally built
+            const EDITED    = 1 << 21;
+            ///internal use
+            const NORELOC   = 1 << 22;
+            ///individual symbol interposers exist for this object
+            const SYMINTPOSE= 1 << 23;
+            ///establish global auditing
+            const GLOBAUDIT = 1 << 24;
+            ///singleton symbols are used
+            const SINGLETON = 1 << 25;
+            ///stub
+            const STUB = 1 << 26;
+            ///position independant executable
+            const PIE  = 1 << 27;
+    }
+}
+

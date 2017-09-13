@@ -55,7 +55,6 @@ pub struct Relocation {
 
 impl Relocation {
 
-
     pub fn entsize(eh: &Header) -> usize {
         match eh.machine {
             types::Machine::X86_64 => 3 * 8,
@@ -71,7 +70,10 @@ impl Relocation {
         let mut r = Vec::new();
 
         while let Ok(addr) = elf_read_u64!(eh, io) {
-            let info    = elf_read_u64!(eh, io)?;
+            let info = match elf_read_u64!(eh, io) {
+                Ok(v) => v,
+                _ => break,
+            };
 
             let sym   = (info >> 32) as u32;
             let rtype = (info & 0xffffffff) as u32;
