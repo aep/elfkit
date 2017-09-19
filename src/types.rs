@@ -369,7 +369,7 @@ impl Default for SymbolType {
 
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Primitive, PartialEq, Clone)]
+#[derive(Debug, Primitive, PartialOrd, Eq, Ord, PartialEq, Clone)]
 pub enum SymbolBind {
     /// Local symbol
     LOCAL       = 0,

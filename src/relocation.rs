@@ -64,7 +64,7 @@ impl Relocation {
 
     pub fn from_reader<R>(mut io: R, _: Option<&SectionContent>, eh: &Header) -> Result<SectionContent, Error> where R: Read{
         if eh.machine != types::Machine::X86_64 {
-            return Err(Error::UnsupportedMachineTypeForRelocation);
+            return Err(Error::UnsupportedMachineTypeForRelocation(eh.machine.clone()));
         }
 
         let mut r = Vec::new();

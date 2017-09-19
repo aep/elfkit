@@ -32,7 +32,7 @@ pub enum Error {
     InvalidSectionFlags(u64),
     InvalidSegmentType(u32),
     InvalidSectionType(u32),
-    UnsupportedMachineTypeForRelocation,
+    UnsupportedMachineTypeForRelocation(types::Machine),
     InvalidSymbolType(u8),
     InvalidSymbolBind(u8),
     InvalidSymbolVis(u8),
@@ -493,6 +493,7 @@ macro_rules!  insert_stuff_with_strtab{
                     v.to_writer(&mut raw, linked, &$self.header)?;
                 }
 
+                $rawsecs.get_mut(&($sec.header.link as usize)).map(|s|s.header.size = s.size() as u64);
             }
             $sec.header.entsize = $size;
             $sec.header.size = raw.len() as u64;
