@@ -655,6 +655,10 @@ impl Elf {
             }
         }
 
+        // always move shstrtab behind any other section, since we might have inserted it above
+        let sectionoffset = self.sections.iter().fold(0, |acc, ref x| acc + x.header.size);
+        self.sections[self.header.shstrndx as usize].header.offset = sectionoffset;
+
         Ok(())
     }
 

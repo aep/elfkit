@@ -29,12 +29,12 @@ fn main() {
     out_elf.segments = in_elf.segments.clone();
 
     // sections which do not have an ALLOC flag aren't needed by the dynamic linker
-    // but also keep the first NULL section for padding
-    // out_elf.sections = in_elf.sections.drain(..).filter(|sec|{
-    //     sec.header.flags.contains(types::SectionFlags::ALLOC) ||
-    //     sec.header.shtype == types::SectionType::NULL
-    // }).collect();
-    out_elf.sections = in_elf.sections;
+    // but also keep the first NULL section
+    out_elf.sections = in_elf.sections.drain(..).filter(|sec|{
+        sec.header.flags.contains(types::SectionFlags::ALLOC) ||
+        sec.header.shtype == types::SectionType::NULL
+    }).collect();
+    //out_elf.sections = in_elf.sections;
 
     out_elf.store_all().unwrap();
 
