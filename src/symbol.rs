@@ -1,7 +1,7 @@
 use std::io::{Read, Write};
 use {Error, Header, types, SectionContent};
 use num_traits::{FromPrimitive,ToPrimitive};
-use utils::find_or_add_to_strtab;
+use strtab::Strtab;
 
 #[derive(Debug, Default, Clone)]
 pub struct Symbol {
@@ -19,7 +19,7 @@ impl Symbol {
 
 
     fn from_val(
-        tab: Option<&Vec<u8>>,
+        tab: Option<&Strtab>,
         _name:   u32,
         info:   u8,
         other:  u8,
@@ -29,8 +29,7 @@ impl Symbol {
         ) -> Result<Symbol, Error> {
 
         let name  = match tab {
-            Some(s) => String::from_utf8_lossy(
-                s[_name as usize ..].split(|c|*c==0).next().unwrap_or(&[0;0])).into_owned(),
+            Some(tab) => tab.get(_name as usize),
             None    => String::default(),
         };
 
@@ -75,8 +74,8 @@ impl Symbol {
 
         let tab = match linked {
             None => None,
-            Some(&SectionContent::Raw(ref s)) => Some(s),
-            _ => return Err(Error::LinkedSectionIsNotStrings),
+            Some(&SectionContent::Strtab(ref s)) => Some(s),
+            _ => return Err(Error::LinkedSectionIsNotStrtab),
         };
 
         let mut r = Vec::new();
@@ -116,8 +115,8 @@ impl Symbol {
         -> Result<(), Error> where W: Write {
 
             match linked {
-                Some(&mut SectionContent::Raw(ref mut strtab)) => {
-                    let off = find_or_add_to_strtab(strtab, self.name.bytes().collect()) as u32;
+                Some(&mut SectionContent::Strtab(ref mut strtab)) => {
+                    let off = strtab.insert(self.name.bytes().collect()) as u32;
                     elf_write_u32!(eh, io, off)?;
                 },
                 _ => elf_write_u32!(eh, io, 0)?,

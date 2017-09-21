@@ -24,6 +24,7 @@ fn main() {
     out_elf.header.etype        = in_elf.header.etype;
     out_elf.header.machine      = in_elf.header.machine;
     out_elf.header.entry        = in_elf.header.entry;
+    out_elf.header.shstrndx     = in_elf.header.shstrndx;
 
     out_elf.segments = in_elf.segments.clone();
 
@@ -34,6 +35,8 @@ fn main() {
     //     sec.header.shtype == types::SectionType::NULL
     // }).collect();
     out_elf.sections = in_elf.sections;
+
+    out_elf.store_all();
 
     out_elf.to_writer(&mut out_file).unwrap();
 }

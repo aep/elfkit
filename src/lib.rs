@@ -7,6 +7,7 @@ pub mod relocation;
 pub mod types;
 pub mod symbol;
 pub mod dynamic;
+pub mod strtab;
 
 use std::io::{Read, Write, Seek, SeekFrom};
 use std::io::BufWriter;
@@ -15,6 +16,7 @@ use std::collections::HashMap;
 
 pub use relocation::Relocation;
 pub use symbol::Symbol;
+pub use strtab::Strtab;
 pub use dynamic::{Dynamic, DynamicContent};
 
 #[derive(Debug)]
@@ -38,7 +40,7 @@ pub enum Error {
     InvalidSymbolVis(u8),
     InvalidDynamicType(u64),
     MissingShstrtabSection,
-    LinkedSectionIsNotStrings,
+    LinkedSectionIsNotStrtab,
     InvalidDynamicFlags1(u64),
 }
 
@@ -342,7 +344,6 @@ impl SegmentHeader {
     }
 }
 
-
 #[derive(Clone)]
 pub enum SectionContent {
     None,
@@ -350,6 +351,7 @@ pub enum SectionContent {
     Relocations(Vec<Relocation>),
     Symbols(Vec<Symbol>),
     Dynamic(Vec<Dynamic>),
+    Strtab(Strtab),
 }
 
 impl Default for SectionContent{
@@ -455,29 +457,70 @@ impl Elf {
         Ok(r)
     }
 
-    pub fn load_all(&mut self) -> Result<(), Error> {
-
-        let mut change = Vec::new();
-        for (i, sec) in self.sections.iter().enumerate() {
-            let linked = self.sections.get(sec.header.link as usize).map(|s|&s.content);
-            if let SectionContent::Raw(ref raw) = sec.content {
-                let io = &raw[..];
-                match sec.header.shtype {
-                    types::SectionType::RELA    =>
-                        change.push((i,Relocation::from_reader(io, linked, &self.header)?)),
-                    types::SectionType::SYMTAB | types::SectionType::DYNSYM =>
-                        change.push((i,Symbol::from_reader(io, linked, &self.header)?)),
-                    types::SectionType::DYNAMIC =>
-                        change.push((i,Dynamic::from_reader(io, linked, &self.header)?)),
-                    _ => {},
-                };
-            };
-        };
-        for (i, content) in change {
-            self.sections[i].content = content;
+    fn load(&self, raw: Vec<u8>, sh: &SectionHeader, linked: Option<&SectionContent>)
+        -> Result<(SectionContent), Error> {
+            Ok(match sh.shtype {
+                types::SectionType::STRTAB => {
+                    let io = &raw[..];
+                    Strtab::from_reader(io, linked, &self.header)?
+                },
+                types::SectionType::RELA   => {
+                    let io = &raw[..];
+                    Relocation::from_reader(io, linked, &self.header)?
+                },
+                types::SectionType::SYMTAB | types::SectionType::DYNSYM => {
+                    let io = &raw[..];
+                    Symbol::from_reader(io, linked, &self.header)?
+                }
+                types::SectionType::DYNAMIC => {
+                    let io = &raw[..];
+                    Dynamic::from_reader(io, linked, &self.header)?
+                }
+                _ => SectionContent::Raw(raw),
+            })
         }
 
 
+    fn load_at(&mut self, i: usize) -> Result<(), Error>{
+        let is_loaded = match self.sections[i].content {
+            SectionContent::Raw(_) => false,
+            _ => true,
+        };
+
+        if is_loaded {
+            return Ok(())
+        }
+
+        //take out the original. this is to work around the borrow checker
+        let mut sec = std::mem::replace(&mut self.sections[i], Section::default());
+        {
+            let linked = {
+                if sec.header.link < 1 || sec.header.link as usize >= self.sections.len() {
+                    None
+                } else {
+                    self.load_at(sec.header.link as usize);
+                    Some(&self.sections[sec.header.link as usize].content)
+                }
+            };
+
+            sec.content = match sec.content {
+                SectionContent::Raw(raw) => {
+                    self.load(raw, &sec.header, linked)?
+                },
+                any => any,
+            };
+        }
+
+        //put it back in
+        self.sections[i] = sec;
+
+        Ok(())
+    }
+
+    pub fn load_all(&mut self) -> Result<(), Error> {
+        for i in 0..self.sections.len() {
+            self.load_at(i);
+        }
         Ok(())
     }
 
@@ -492,7 +535,6 @@ macro_rules!  insert_stuff_with_strtab{
                     let linked = $rawsecs.get_mut(&($sec.header.link as usize)).map(|s|&mut s.content);
                     v.to_writer(&mut raw, linked, &$self.header)?;
                 }
-
                 $rawsecs.get_mut(&($sec.header.link as usize)).map(|s|s.header.size = s.size() as u64);
             }
             $sec.header.entsize = $size;
@@ -505,54 +547,6 @@ macro_rules!  insert_stuff_with_strtab{
 
 
 impl Elf {
-
-    /*
-     * There aren't used here anymore, because this is the wrong API to generate these sections.
-     * we need a higher level api for this
-     *
-     *
-     *
-    fn insert_dynstr(&mut self) -> u32 {
-        self.sections.push(Section{
-            name: String::from(".dynstr"),
-            header: SectionHeader {
-                name:       0,
-                shtype:     types::SectionType::STRTAB,
-                flags:      types::SectionFlags::ALLOC,
-                addr:       0,//FIXME: this needs to be loaded somewhere,
-                offset:     0,
-                size:       0,
-                link:       0,
-                info:       0,
-                addralign:  1,
-                entsize:    0,
-            },
-            content: SectionContent::Raw(Vec::new()),
-        });
-        self.sections.len() as u32 -1
-    }
-
-    fn insert_strtab(&mut self) -> u32 {
-        self.sections.push(Section{
-            name: String::from(".strtab"),
-            header: SectionHeader {
-                name:       0,
-                shtype:     types::SectionType::STRTAB,
-                flags:      types::SectionFlags::empty(),
-                addr:       0,//FIXME: this needs to be loaded somewhere,
-                offset:     0,
-                size:       0,
-                link:       0,
-                info:       0,
-                addralign:  1,
-                entsize:    0,
-            },
-            content: SectionContent::Raw(Vec::new()),
-        });
-        self.sections.len() as u32 -1
-    }
-    */
-
 
     pub fn store_all(&mut self) -> Result<(), Error> {
 
@@ -597,6 +591,12 @@ impl Elf {
                         rawsecs.insert(i, sec);
                     },
                     SectionContent::Symbols(vv) => {
+                        for (i, sym) in vv.iter().enumerate() {
+                            if sym.bind == types::SymbolBind::GLOBAL {
+                                sec.header.info = i as u32;
+                                break;
+                            }
+                        }
                         insert_stuff_with_strtab!(self, sec, vv, Symbol::entsize(&self.header) as u64, rawsecs, i);
                     },
                     SectionContent::Dynamic(vv) => {

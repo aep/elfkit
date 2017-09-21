@@ -2,7 +2,6 @@ use std::io::{Read, Write};
 use {Header, Error, SectionContent};
 use types;
 use num_traits::{FromPrimitive, ToPrimitive};
-use utils::find_or_add_to_strtab;
 
 #[derive(Debug, Clone)]
 pub enum DynamicContent {
@@ -31,8 +30,8 @@ impl Dynamic {
 
         let strtab = match linked {
             None => None,
-            Some(&SectionContent::Raw(ref s)) => Some(s),
-            _ => return Err(Error::LinkedSectionIsNotStrings),
+            Some(&SectionContent::Strtab(ref s)) => Some(s),
+            _ => return Err(Error::LinkedSectionIsNotStrtab),
         };
 
         let mut r = Vec::new();
@@ -54,8 +53,7 @@ impl Dynamic {
                         dhtype:  types::DynamicType::NEEDED,
                         content: DynamicContent::String(match strtab {
                             None => String::default(),
-                            Some(s) => String::from_utf8_lossy(
-                                s[val as usize ..].split(|c|*c==0).next().unwrap_or(&[0;0])).into_owned(),
+                            Some(s) => s.get(val as usize),
                         }),
                     });
                 },
@@ -87,8 +85,8 @@ impl Dynamic {
             DynamicContent::None => {elf_write_uclass!(eh, io, 0)?;},
             DynamicContent::String(ref s) => {
                 match linked {
-                    Some(&mut SectionContent::Raw(ref mut dynstr)) => {
-                        let off = find_or_add_to_strtab(dynstr, s.bytes().collect()) as u64;
+                    Some(&mut SectionContent::Strtab(ref mut dynstr)) => {
+                        let off = dynstr.insert(s.bytes().collect()) as u64;
                         elf_write_uclass!(eh, io, off)?;
                     },
                     _ => elf_write_uclass!(eh, io, 0)?,
