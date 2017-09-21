@@ -119,7 +119,7 @@ impl Symbol {
                     let off = strtab.insert(self.name.bytes().collect()) as u32;
                     elf_write_u32!(eh, io, off)?;
                 },
-                _ => elf_write_u32!(eh, io, 0)?,
+                _ => return Err(Error::LinkedSectionIsNotStrtab),
             }
 
 

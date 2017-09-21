@@ -20,11 +20,14 @@ impl Strtab{
         for i in 0..r.data.len() {
             let c = r.data[i];
             if c == 0 {
-                r.hash.insert(n, start);
+                for x in 0..n.len() {
+                    r.hash.insert(n[x..].to_vec(), start + x);
+                }
                 start = i + 1;
                 n = Vec::new()
+            } else {
+                n.push(c);
             }
-
         }
 
         Ok(SectionContent::Strtab(r))
@@ -37,10 +40,22 @@ impl Strtab{
         }
 
     pub fn get(&self, i: usize) -> String{
+        if i >= self.data.len() {
+            println!("pointer {} into strtab extends beyond section size", i);
+            return String::from("<corrupt>");
+        }
         String::from_utf8_lossy(self.data[i..].split(|c|*c==0).next().unwrap_or(&[0;0])).into_owned()
     }
 
-    pub fn insert(&mut self, mut ns: Vec<u8>) -> usize{
+    pub fn insert(&mut self, mut ns: Vec<u8>) -> usize {
+        //special handling for null. for some reason rusts hashmap doesn't do that correctly
+        if self.data.len() < 1 {
+            self.data.push(0)
+        }
+        if ns.len() == 0 {
+            return 0;
+        }
+
         match self.hash.entry(ns.clone()) {
             Entry::Occupied(entry) => *entry.get(),
             Entry::Vacant(entry) => {

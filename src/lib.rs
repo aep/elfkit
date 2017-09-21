@@ -220,6 +220,14 @@ pub struct SectionHeader {
 }
 
 impl SectionHeader {
+
+    pub fn entsize(eh: &Header) ->  usize {
+        4 + 4 + match eh.ident_class {
+            types::Class::Class64 => 6 * 8,
+            types::Class::Class32 => 6 * 4,
+        } + 4 + 4
+    }
+
     pub fn from_reader<R>(io: &mut R, eh: &Header) -> Result<SectionHeader, Error> where R: Read {
         let mut r = SectionHeader::default();
         let mut b = vec![0; eh.shentsize as usize];
@@ -483,7 +491,7 @@ impl Elf {
 
     fn load_at(&mut self, i: usize) -> Result<(), Error>{
         let is_loaded = match self.sections[i].content {
-            SectionContent::Raw(_) => false,
+            SectionContent::Raw(_) | SectionContent::None => false,
             _ => true,
         };
 
@@ -526,121 +534,126 @@ impl Elf {
 
 }
 
-macro_rules!  insert_stuff_with_strtab{
-    ($self:ident, $sec:ident, $vv:ident, $size:expr, $rawsecs:ident, $i:ident) => {
-        {
-            let mut raw = Vec::new();
-            {
-                for v in $vv {
-                    let linked = $rawsecs.get_mut(&($sec.header.link as usize)).map(|s|&mut s.content);
-                    v.to_writer(&mut raw, linked, &$self.header)?;
-                }
-                $rawsecs.get_mut(&($sec.header.link as usize)).map(|s|s.header.size = s.size() as u64);
-            }
-            $sec.header.entsize = $size;
-            $sec.header.size = raw.len() as u64;
-            $sec.content = SectionContent::Raw(raw);
-            $rawsecs.insert($i, $sec)
-        }
-    };
-}
-
-
 impl Elf {
+    fn store(eh: &Header, mut sec: Section, mut linked: Option<&mut SectionContent>) -> Result<(Section), Error> {
+        match sec.content {
+            SectionContent::Relocations(vv) => {
+                let mut raw = Vec::new();
+                for v in vv {
+                    v.to_writer(&mut raw, None, eh)?;
+                }
+                sec.header.entsize  = Relocation::entsize(eh) as u64;
+                sec.header.size     = raw.len() as u64;
+                sec.content         = SectionContent::Raw(raw);
+            },
+            SectionContent::Symbols(vv) => {
+                for (i, sym) in vv.iter().enumerate() {
+                    if sym.bind == types::SymbolBind::GLOBAL {
+                        sec.header.info = i as u32;
+                        break;
+                    }
+                }
+                let mut raw = Vec::new();
+                for v in vv {
+                    v.to_writer(&mut raw, linked.as_mut().map(|r|&mut **r), eh)?;
+                }
+                sec.header.entsize  = Symbol::entsize(eh) as u64;
+                sec.header.size     = raw.len() as u64;
+                sec.content         = SectionContent::Raw(raw);
+            },
+            SectionContent::Dynamic(vv) => {
+                let mut raw = Vec::new();
+                for v in vv {
+                    v.to_writer(&mut raw, linked.as_mut().map(|r|&mut **r), eh)?;
+                }
+                sec.header.entsize  = Dynamic::entsize(eh) as u64;
+                sec.header.size     = raw.len() as u64;
+                sec.content         = SectionContent::Raw(raw);
+
+            },
+            SectionContent::Strtab(v) => {
+                let mut raw = Vec::new();
+                v.to_writer(&mut raw, None, eh)?;
+                sec.header.entsize  = Strtab::entsize(eh) as u64;
+                sec.header.size     = raw.len() as u64;
+                sec.content         = SectionContent::Raw(raw);
+            },
+            SectionContent::None | SectionContent::Raw(_) => {},
+        };
+        Ok(sec)
+    }
+
+    fn store_at(&mut self, i: usize) -> Result<(bool), Error>{
+        let is_stored = match self.sections[i].content {
+            SectionContent::Raw(_) | SectionContent::None => true,
+            _ => false,
+        };
+
+        if is_stored {
+            return Ok((false))
+        }
+
+        //take out the original. this is to work around the borrow checker
+        let mut sec = std::mem::replace(&mut self.sections[i], Section::default());
+        {
+            //circular section dependencies are possible, so the best idea i have right now
+            //is loading the linked section again and iterate until no sections are loaded anymore
+            let linked = {
+                if sec.header.link < 1 || sec.header.link as usize >= self.sections.len() {
+                    None
+                } else {
+                    self.load_at(sec.header.link as usize);
+                    Some(&mut self.sections[sec.header.link as usize].content)
+                }
+            };
+
+            sec = Elf::store(&self.header, sec, linked)?;
+
+        }
+
+        //put it back in
+        self.sections[i] = sec;
+
+        Ok((true))
+    }
+
+
 
     pub fn store_all(&mut self) -> Result<(), Error> {
 
-        //split in raw and parsed
-        let secnums = self.sections.len();
-        let mut rawsecs : HashMap<usize, Section> = HashMap::new();
-        let mut parsecs : HashMap<usize, Section> = HashMap::new();
-
-        for (i, sec) in self.sections.drain(..).enumerate() {
-            match (&sec.content, &sec.header.shtype) {
-                (&SectionContent::Raw(_), &types::SectionType::STRTAB) => {
-                    rawsecs.insert(i, sec);
-                },
-                (&SectionContent::None, _) => {
-                    rawsecs.insert(i, sec);
-                },
-                (&SectionContent::Raw(_), _) => {
-                    rawsecs.insert(i, sec);
-                },
-                _ => {
-                    parsecs.insert(i, sec);
-                }
-            }
-        }
-
-        //correct sizes
-        for (_,sec) in  &mut rawsecs {
-            match sec.content { SectionContent::Raw(ref v)  => sec.header.size = v.len() as u64, _ => {},};
-        }
-
-        for i in 0..secnums {
-            if let Some(mut sec) = parsecs.remove(&i) {
-                match sec.content {
-                    SectionContent::Relocations(vv) => {
-                        let mut raw = Vec::new();
-                        for v in vv {
-                            v.to_writer(&mut raw, None, &self.header)?;
-                        }
-                        sec.header.entsize = Relocation::entsize(&self.header) as u64;
-                        sec.header.size = raw.len() as u64;
-                        sec.content = SectionContent::Raw(raw);
-                        rawsecs.insert(i, sec);
-                    },
-                    SectionContent::Symbols(vv) => {
-                        for (i, sym) in vv.iter().enumerate() {
-                            if sym.bind == types::SymbolBind::GLOBAL {
-                                sec.header.info = i as u32;
-                                break;
-                            }
-                        }
-                        insert_stuff_with_strtab!(self, sec, vv, Symbol::entsize(&self.header) as u64, rawsecs, i);
-                    },
-                    SectionContent::Dynamic(vv) => {
-                        insert_stuff_with_strtab!(self, sec, vv, Dynamic::entsize(&self.header) as u64, rawsecs, i);
-                    },
-                    _ => unreachable!(),
-                }
-            }
-        }
-
-        for i in 0..secnums {
-            if let Some(sec) = rawsecs.remove(&i) {
-                self.sections.insert(i, sec);
-            }
-        }
-
         //shstrtab
-        let mut shstrtab = String::from(".shstrtab\0");
-        let mut inoff = shstrtab.len();
+        self.header.shstrndx = match self.sections.iter().position(|s|s.name == ".shstrtab") {
+            Some(i) => i as u16,
+            None => {
+                self.sections.push(Section{
+                    header: SectionHeader {
+                        name:       0,
+                        shtype:     types::SectionType::STRTAB,
+                        flags:      types::SectionFlags::from_bits_truncate(0),
+                        addr: 0, offset: 0, size: 0, link: 0, info: 0, addralign: 0, entsize: 1,
+                    },
+                    name: String::from(".shstrtab"),
+                    content: SectionContent::None,
+                });
+                self.sections.len() as u16 - 1
+            }
+        };
+        let mut shstrtab = Strtab::default();
         for sec in &mut self.sections {
-            shstrtab += &sec.name;
-            shstrtab += "\0";
-            sec.header.name = inoff as u32;
-            inoff += sec.name.len() + 1;
+            sec.header.name = shstrtab.insert(sec.name.as_bytes().to_vec()) as u32;
         }
+        self.sections[self.header.shstrndx as usize].content = SectionContent::Strtab(shstrtab);
 
-        //TODO don't push this if it exists
-        self.sections.push(Section{
-            header: SectionHeader {
-                name:       0,
-                shtype:     types::SectionType::STRTAB,
-                flags:      types::SectionFlags::from_bits_truncate(0),
-                addr:       0,
-                offset:     0,
-                size:       shstrtab.len() as u64,
-                link:       0,
-                info:       0,
-                addralign:  0,
-                entsize:    0,
-            },
-            name: String::from(".shstrtab"),
-            content: SectionContent::Raw(shstrtab.into_bytes()),
-        });
-        self.header.shstrndx = self.sections.len() as u16 - 1;
+
+        loop {
+            let mut still_need_to_store = false;
+            for i in 0..self.sections.len(){
+                still_need_to_store = still_need_to_store || self.store_at(i)?;
+            }
+            if !still_need_to_store {
+                break
+            }
+        }
 
         Ok(())
     }
@@ -684,55 +697,39 @@ impl Elf {
             off = at;
         }
 
+        let headers : Vec<SectionHeader> = self.sections.iter().map(|s|s.header.clone()).collect();
+        let mut sections = std::mem::replace(&mut self.sections, Vec::new());
+
         //sections
-        let mut sections = self.sections.to_vec();
-        for sec in &mut sections {
-            off = io.seek(SeekFrom::Current(0))? as usize;
-            if off != sec.header.offset as usize && sec.header.offset != 0 && sec.header.flags.contains(types::SectionFlags::ALLOC) {
+        sections.sort_unstable_by(|a,b|a.header.offset.cmp(&b.header.offset));
+        for sec in sections {
+            let off = io.seek(SeekFrom::Current(0))? as usize;
 
-                //FIXME should we re-arrange the program headers instead?
-                //this seems like something for a higher level api instead
-                if sec.header.offset as usize > off  {
-                    println!("FIXME: padding section {} because it should be at {:x} but would have been at {:x}",
-                             sec.name, sec.header.offset, off);
-                    io.write(&vec![0;sec.header.offset as usize - off])?;
-                    off = io.seek(SeekFrom::Current(0))? as usize;
-                } else {
-                    println!("FIXME: section {} will be at a different physical location than intended.
-                                  the resuling binary will probably not work.
-                                  Section should be at {:x} but the current file is already size {:x}.",
-                             sec.name, sec.header.offset, off);
-                }
-
-            }
-
-            sec.header.offset = off as u64;
+            assert_eq!(io.seek(SeekFrom::Start(sec.header.offset))?, sec.header.offset);
             match sec.content {
                 SectionContent::Raw(ref v) => {
+                    if off > sec.header.offset as usize {
+                        println!("BUG in elfkit caller: section layout is broken. \
+would write section '{}' at position 0x{:x} over previous section that ended at 0x{:x}",
+sec.name, sec.header.offset, off);
+                    }
                     io.write(&v.as_ref())?;
                 }
                 _ => {},
             }
-            let at = io.seek(SeekFrom::Current(0))? as usize;
-            sec.header.size = (at - off) as u64;
-            off = at;
         }
-        self.sections = sections;
 
 
         //section headers
-
-        let mut off = io.seek(SeekFrom::Current(0))? as usize;
+        let mut off = io.seek(SeekFrom::End(0))? as usize;
         self.header.shoff = off as u64;
-        for sec in &self.sections {
-            sec.header.to_writer(&self.header, io)?;
+        for sec in &headers{
+            sec.to_writer(&self.header, io)?;
         }
         let at = io.seek(SeekFrom::Current(0))? as usize;
-        self.header.shnum       = self.sections.len() as u16;
-        self.header.shentsize   = ((at - off)/ self.sections.len()) as u16;
+        self.header.shnum       = headers.len() as u16;
+        self.header.shentsize   = SectionHeader::entsize(&self.header) as u16;
         off = at;
-
-
 
         //hygene
         self.header.ehsize = self.header.size() as u16;

@@ -36,7 +36,7 @@ fn main() {
     // }).collect();
     out_elf.sections = in_elf.sections;
 
-    out_elf.store_all();
+    out_elf.store_all().unwrap();
 
     out_elf.to_writer(&mut out_file).unwrap();
 }
