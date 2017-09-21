@@ -8,6 +8,7 @@ pub mod types;
 pub mod symbol;
 pub mod dynamic;
 pub mod strtab;
+pub mod linker;
 
 use std::io::{Read, Write, Seek, SeekFrom};
 use std::io::BufWriter;
