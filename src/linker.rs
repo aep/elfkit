@@ -20,7 +20,6 @@ impl Linker {
         for i in 0..elf.sections.len() {
             let section = &elf.sections[i];
 
-
             match section.name.as_ref() {
                 ".dynamic" => {
                     r.push(SegmentHeader{
