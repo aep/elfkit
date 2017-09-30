@@ -58,9 +58,6 @@ impl Unit {
                                     reloc.addend as i64)
                                     as u64;
 
-                                let (_,mut xd) = r.text.split_at_mut(reloc.addr as usize);
-                                elf_write_u64!(&in_elf.header, xd, value)?;
-
                                 r.dynrel.push(Relocation{
                                     rtype:  RelocationType::R_X86_64_RELATIVE,
                                     sym:    0,
