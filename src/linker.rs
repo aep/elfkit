@@ -1,9 +1,16 @@
-use {Elf, Error, Header, SectionHeader, SegmentHeader, types};
+use {Elf, Error, Header, SectionHeader, SegmentHeader, types, Dynamic};
+use dynamic::DynamicContent;
 
+/**
+ * high level linker stuff
+ * this is the only api making assumptions based on section names.
+ */
 pub struct Linker {
 }
 
 impl Linker {
+    /// generate program headers from fully layouted sections.
+    /// sections must be synced
     pub fn segments(elf : &Elf) -> Result<Vec<SegmentHeader>, Error> {
         let mut r = Vec::new();
         if elf.sections.len() < 2 {
@@ -83,7 +90,7 @@ impl Linker {
                     vaddr:  vstart,
                     paddr:  vstart,
                     memsz:  voff - vstart,
-                    align:  0x10000,
+                    align:  0x200000,
                 });
 
                 vshift = section.header.addr as i64 - section.header.offset as i64;
@@ -115,9 +122,12 @@ impl Linker {
             vaddr:  vstart,
             paddr:  vstart,
             memsz:  voff - vstart,
-            align:  0x10000,
+            align:  0x200000,
         });
 
+        if elf.sections[1].header.offset > elf.sections[1].header.addr {
+            return Err(Error::FirstSectionOffsetCanNotBeLargerThanAddress);
+        }
 
         let first_vshift = elf.sections[1].header.addr - elf.sections[1].header.offset;
         let segments_size = SegmentHeader::entsize(&elf.header) * (r.len() + 1);
@@ -134,4 +144,92 @@ impl Linker {
 
         Ok(r)
     }
+
+
+    /// generate dynamic linker instructions from fully layouted sections.
+    /// sections must be synced
+    /// returned list is null terminated, do not append, but call insert instead.
+    /// some object types might need additional instructions such as NEEDED and FLAGS_1
+    /// which cannot be generated here
+
+    pub fn dynamic(elf: &Elf) -> Result<Vec<Dynamic>, Error> {
+        let mut r = Vec::new();
+
+        for sec in &elf.sections {
+            match sec.name.as_ref() {
+                ".dynstr" => {
+                    r.push(Dynamic{
+                        dhtype: types::DynamicType::STRTAB,
+                        content: DynamicContent::Address(sec.header.addr),
+                    });
+
+                    r.push(Dynamic{
+                        dhtype: types::DynamicType::STRSZ,
+                        content: DynamicContent::Address(sec.header.size),
+                    });
+                },
+                ".dynsym" => {
+                    r.push(Dynamic{
+                        dhtype: types::DynamicType::SYMTAB,
+                        content: DynamicContent::Address(sec.header.addr),
+                    });
+                    r.push(Dynamic{
+                        dhtype: types::DynamicType::SYMENT,
+                        content: DynamicContent::Address(sec.header.entsize),
+                    });
+                },
+                ".rela.dyn" => {
+                    r.push(Dynamic{
+                        dhtype:  types::DynamicType::RELA,
+                        content: DynamicContent::Address(sec.header.addr),
+                    });
+                    r.push(Dynamic{
+                        dhtype:  types::DynamicType::RELASZ,
+                        content: DynamicContent::Address(sec.header.size),
+                    });
+                    r.push(Dynamic{
+                        dhtype:  types::DynamicType::RELAENT,
+                        content: DynamicContent::Address(sec.header.entsize),
+                    });
+                    r.push(Dynamic{
+                        dhtype:  types::DynamicType::RELACOUNT,
+                        content: DynamicContent::Address(sec.header.size / sec.header.entsize),
+                    });
+                },
+                _ => {},
+            }
+        }
+
+        r.push(Dynamic{
+            dhtype:  types::DynamicType::NULL,
+            content: DynamicContent::Address(0),
+        });
+        Ok(r)
+    }
+
+
+    pub fn relayout(elf: &mut Elf, pstart: u64) -> Result<(), Error> {
+        let mut poff = pstart;
+        for sec in &mut elf.sections[1..] {
+            //align to 16 bit //TODO: how do i know it's supposed to be 16?
+            //if poff % 16 != 0 {
+            //    poff += 16 - (poff % 8);
+            //}
+            sec.header.offset = poff;
+            poff += sec.size(&elf.header) as u64;
+        };
+
+        let mut voff = 0;
+        for sec in &mut elf.sections {
+            //TODO ld does this. maybe can't have address 0 write mapped?
+            //i need to figure out how exactly this is supposed to work
+            if sec.header.flags.contains(types::SectionFlags::WRITE) {
+                voff = 0x200000;
+            }
+            sec.header.addr = voff + sec.header.offset;
+        }
+        Ok(())
+    }
+
 }
+

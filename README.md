@@ -8,10 +8,12 @@ Elfkit
 =========
 
 an elf read and manipulation library in pure rust (no bfd, no gnu code),
-intended to be used in binary manipulation utils such as strip, objcopy, link editors, etc.
+intended to be used in binary manipulation utils such as strip, objcopy, linkers.
+The end goal is to build a drop-in replacement for gnu ld.
 
 Some gnu binutils replacements are included as example code.
 
+__warning: the high level api is a moving target. do not start using load/store yet__
 
 ```
 cargo run --example readelf ./tests/samples/amd64_exe
@@ -35,11 +37,6 @@ fn main() {
     let mut out_file = OpenOptions::new().write(true).truncate(true).create(true).open(out_filename).unwrap();
 
     let mut in_elf  = Elf::from_reader(&mut in_file).unwrap();
-
-    // de/serialize all known section types to detailed representation
-    // this isn't nessesary for strip, because it never touches the section content
-    // we just do this for demonstration purposes
-    in_elf.load_all().unwrap();
 
     let mut out_elf = Elf::default();
 

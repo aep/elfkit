@@ -75,7 +75,7 @@ impl Symbol {
         let tab = match linked {
             None => None,
             Some(&SectionContent::Strtab(ref s)) => Some(s),
-            _ => return Err(Error::LinkedSectionIsNotStrtab),
+            _ => return Err(Error::LinkedSectionIsNotStrtab("reading symbols")),
         };
 
         let mut r = Vec::new();
@@ -119,7 +119,7 @@ impl Symbol {
                     let off = strtab.insert(self.name.bytes().collect()) as u32;
                     elf_write_u32!(eh, io, off)?;
                 },
-                _ => return Err(Error::LinkedSectionIsNotStrtab),
+                _ => return Err(Error::LinkedSectionIsNotStrtab("writing symbols")),
             }
 
 
@@ -142,4 +142,14 @@ impl Symbol {
             };
             Ok(())
         }
+
+    pub fn sync(&self, linked: Option<&mut SectionContent>, eh: &Header) -> Result<(), Error> {
+        match linked {
+            Some(&mut SectionContent::Strtab(ref mut strtab)) => {
+                let off = strtab.insert(self.name.bytes().collect()) as u32;
+            },
+            _ => return Err(Error::LinkedSectionIsNotStrtab("syncing symbols")),
+        }
+        Ok(())
+    }
 }

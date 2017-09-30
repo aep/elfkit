@@ -66,27 +66,31 @@ fn main() {
   "L".bold(), "O".bold(), "G".bold(), "T".bold(),
   "C".bold(), "o".bold(), "E".bold(), "l".bold(), "g".bold());
 
-    println!("");
-    println!("{} at offset 0x{:x}:", "Program Headers (Segments)".bold(), elf.header.phoff);
-    println!("  Type           Offset             VirtAddr           PhysAddr");
-    println!("                 FileSiz            MemSiz             Flags  Align");
+    if elf.segments.len() > 0 {
+        println!("");
+        println!("{} at offset 0x{:x}:", "Program Headers (Segments)".bold(), elf.header.phoff);
+        println!("  Type           Offset             VirtAddr           PhysAddr");
+        println!("                 FileSiz            MemSiz             Flags  Align");
 
-    for ph in &elf.segments {
-        println!("  {:<14.14} 0x{} 0x{} 0x{}",
-                 format!("{:?}", ph.phtype), hextab(16, ph.offset), hextab(16, ph.vaddr), hextab(16, ph.paddr));
+        for ph in &elf.segments {
+            println!("  {:<14.14} 0x{} 0x{} 0x{}",
+                     format!("{:?}", ph.phtype), hextab(16, ph.offset), hextab(16, ph.vaddr), hextab(16, ph.paddr));
 
-        println!("                 0x{} 0x{} {:<6} 0x{:x}",
-                 hextab(16, ph.filesz), hextab(16, ph.memsz), ph.flags,  ph.align);
+            println!("                 0x{} 0x{} {:<6} 0x{:x}",
+                     hextab(16, ph.filesz), hextab(16, ph.memsz), ph.flags,  ph.align);
+        }
     }
+
     println!("");
     println!("{}:", "File Layout".bold());
-
 
     let mut fls = vec![
         ("elf header",      0, elf.header.ehsize as u64),
         ("section headers", elf.header.shoff, (elf.header.shentsize * elf.header.shnum) as u64),
-        ("segment headers", elf.header.phoff, (elf.header.phentsize * elf.header.phnum) as u64),
     ];
+    if elf.header.phoff > 0 {
+        fls.push(("segment headers", elf.header.phoff, (elf.header.phentsize * elf.header.phnum) as u64));
+    }
 
     for section in elf.sections.iter() {
         if section.header.size < 1 {
@@ -100,24 +104,45 @@ fn main() {
     fls.sort_by(|&(_,a,_),&(_,b,_)| a.cmp(&b));
 
     println!("{}", "                     offset     size     segment".bold());
-    for n in 0..12 {
-        let n = n;
-        print!(        "                                         ");
+    if elf.segments.len() > 0 {
+        for n in 0..12 {
+            let n = n;
+            print!(        "                                         ");
+            for segment in elf.segments.iter() {
+                let name = format!("{:?}", segment.phtype);
+                print!(" {} |", if name.len() > n {&name[n..n+1]} else {" "});
+            }
+            println!("");
+        }
+        print!("                                         ");
         for segment in elf.segments.iter() {
-            let name = format!("{:?}", segment.phtype);
-            print!(" {} |", if name.len() > n {&name[n..n+1]} else {" "});
+            print!("---|")
         }
         println!("");
     }
-    print!("                                         ");
-    for segment in elf.segments.iter() {
-        print!("---|")
-    }
-    println!("");
 
+
+
+    let mut cfileoff = 0;
+    let mut fls_intermediate = fls.drain(..).collect::<Vec<(&str,u64,u64)>>();
+    for (name, off, size) in fls_intermediate {
+        if cfileoff < off {
+            fls.push(("", cfileoff, off - cfileoff));
+        }
+        fls.push((name, off, size));
+        cfileoff = off + size;
+    }
+
+    if let Some(&(name, off, size)) = fls.last() {
+        let filelen = file.metadata().unwrap().len();
+        if off + size < filelen {
+            fls.push(("", off + size, filelen - (off + size)));
+        }
+    }
 
 
     for (name, off, size) in fls {
+
         print!("  {}   0x{:<6.6x}   0x{:<6.6x} ", format!("{:<16.16}", name).bold(), off, size);
 
         for segment in elf.segments.iter() {

@@ -31,7 +31,7 @@ impl Dynamic {
         let strtab = match linked {
             None => None,
             Some(&SectionContent::Strtab(ref s)) => Some(s),
-            _ => return Err(Error::LinkedSectionIsNotStrtab),
+            _ => return Err(Error::LinkedSectionIsNotStrtab("reading dynamic")),
         };
 
         let mut r = Vec::new();
@@ -94,6 +94,23 @@ impl Dynamic {
             },
             DynamicContent::Address(ref v) => {elf_write_uclass!(eh, io, *v)?;},
             DynamicContent::Flags1(ref v) => {elf_write_uclass!(eh, io, v.bits())?;}
+        }
+        Ok(())
+    }
+
+    pub fn sync(&self, linked: Option<&mut SectionContent>, eh: &Header) -> Result<(), Error> {
+        match self.content {
+            DynamicContent::String(ref s) => {
+                match linked {
+                    Some(&mut SectionContent::Strtab(ref mut strtab)) => {
+                        let off = strtab.insert(s.bytes().collect()) as u32;
+                    },
+                    _ => return Err(Error::LinkedSectionIsNotStrtab("syncing dynamic")),
+                }
+            },
+            DynamicContent::None => {},
+            DynamicContent::Address(_) => {},
+            DynamicContent::Flags1(_) => {},
         }
         Ok(())
     }

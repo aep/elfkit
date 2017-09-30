@@ -41,8 +41,9 @@ pub enum Error {
     InvalidSymbolVis(u8),
     InvalidDynamicType(u64),
     MissingShstrtabSection,
-    LinkedSectionIsNotStrtab,
+    LinkedSectionIsNotStrtab(&'static str),
     InvalidDynamicFlags1(u64),
+    FirstSectionOffsetCanNotBeLargerThanAddress,
 }
 
 impl From<::std::io::Error> for Error {
@@ -366,6 +367,30 @@ pub enum SectionContent {
 impl Default for SectionContent{
     fn default() -> Self {SectionContent::None}
 }
+impl SectionContent {
+    pub fn as_dynamic_mut(&mut self) -> Option<&mut Vec<Dynamic>> {
+        match self {
+            &mut SectionContent::Dynamic(ref mut v) => Some(v),
+            _ => None,
+        }
+    }
+    pub fn as_strtab_mut(&mut self) -> Option<&mut Strtab> {
+        match self {
+            &mut SectionContent::Strtab(ref mut v) => Some(v),
+            _ => None,
+        }
+    }
+    pub fn size(&self, eh: &Header) -> usize {
+        match self {
+            &SectionContent::None => 0,
+            &SectionContent::Raw(ref v) => v.len(),
+            &SectionContent::Dynamic(ref v) => v.len() * Dynamic::entsize(eh),
+            &SectionContent::Strtab(ref v) => v.len(eh),
+            &SectionContent::Symbols(ref v) => v.len() * Symbol::entsize(eh),
+            &SectionContent::Relocations(ref v) => v.len() * Relocation::entsize(eh),
+        }
+    }
+}
 
 #[derive(Default, Clone)]
 pub struct Section {
@@ -376,12 +401,58 @@ pub struct Section {
 
 
 impl Section {
-    pub fn size(&self) -> usize {
-        match self.content {
-            SectionContent::None => 0,
-            SectionContent::Raw(ref v) => v.len(),
-            _ => panic!("tried to size a section that isn't serialized"),
+    pub fn size(&self, eh: &Header) -> usize { self.content.size(eh) }
+    pub fn new(name: &str, shtype: types::SectionType, flags: types::SectionFlags,
+               content: SectionContent, link: u32, info: u32) -> Section {
+        Section{
+            name: String::from(name),
+            header: SectionHeader {
+                name:       0,
+                shtype:     shtype,
+                flags:      flags,
+                addr:       0,
+                offset:     0,
+                size:       0,
+                link:       link,
+                info:       info,
+                addralign:  0,
+                entsize:    0,
+            },
+            content: content,
         }
+    }
+
+    pub fn sync(&mut self, eh: &Header, mut linked: Option<&mut SectionContent>)
+        -> Result<(), Error> {
+        match self.content {
+            SectionContent::Relocations(ref vv) => {
+                self.header.entsize  = Relocation::entsize(eh) as u64;
+            },
+            SectionContent::Symbols(ref vv) => {
+                for (i, sym) in vv.iter().enumerate() {
+                    if sym.bind == types::SymbolBind::GLOBAL {
+                        self.header.info = i as u32;
+                        break;
+                    }
+                }
+                for v in vv {
+                    v.sync(linked.as_mut().map(|r|&mut **r), eh)?;
+                }
+                self.header.entsize  = Symbol::entsize(eh) as u64;
+            },
+            SectionContent::Dynamic(ref vv) => {
+                for v in vv {
+                    v.sync(linked.as_mut().map(|r|&mut **r), eh)?;
+                }
+                self.header.entsize  = Dynamic::entsize(eh) as u64;
+            },
+            SectionContent::Strtab(ref v) => {
+                self.header.entsize  = Strtab::entsize(eh) as u64;
+            },
+            SectionContent::None | SectionContent::Raw(_) => {},
+        }
+        self.header.size = self.size(eh) as u64;
+        Ok(())
     }
 }
 
@@ -618,33 +689,18 @@ impl Elf {
         Ok((true))
     }
 
-
-
     pub fn store_all(&mut self) -> Result<(), Error> {
-
-        //shstrtab
         self.header.shstrndx = match self.sections.iter().position(|s|s.name == ".shstrtab") {
             Some(i) => i as u16,
-            None => {
-                self.sections.push(Section{
-                    header: SectionHeader {
-                        name:       0,
-                        shtype:     types::SectionType::STRTAB,
-                        flags:      types::SectionFlags::from_bits_truncate(0),
-                        addr: 0, offset: 0, size: 0, link: 0, info: 0, addralign: 0, entsize: 1,
-                    },
-                    name: String::from(".shstrtab"),
-                    content: SectionContent::None,
-                });
-                self.sections.len() as u16 - 1
-            }
+            None => return Err(Error::MissingShstrtabSection),
         };
-        let mut shstrtab = Strtab::default();
-        for sec in &mut self.sections {
-            sec.header.name = shstrtab.insert(sec.name.as_bytes().to_vec()) as u32;
-        }
-        self.sections[self.header.shstrndx as usize].content = SectionContent::Strtab(shstrtab);
+        let mut shstrtab = std::mem::replace(
+            &mut self.sections[self.header.shstrndx as usize].content, SectionContent::default());
 
+        for sec in &mut self.sections {
+            sec.header.name = shstrtab.as_strtab_mut().unwrap().insert(sec.name.as_bytes().to_vec()) as u32;
+        }
+        self.sections[self.header.shstrndx as usize].content = shstrtab;
 
         loop {
             let mut still_need_to_store = false;
@@ -656,28 +712,47 @@ impl Elf {
             }
         }
 
-        // always move shstrtab behind any other section, since we might have inserted it above
-        let sectionoffset = self.sections.iter().fold(0, |acc, ref x| acc + x.header.size);
-        self.sections[self.header.shstrndx as usize].header.offset = sectionoffset;
-
         Ok(())
     }
 
-    // at this point we assume the following state for all sections:
-    //  - content is raw
-    //  - header.size is correct
-    //
-    pub fn relayout(&mut self, pstart: u64, vstart: u64) -> Result<(), Error> {
-        //calculate addresses and offsets
-        let mut poff = pstart;
-        let mut voff = vstart;
+    /// write out everything to linked sections, such as string tables
+    /// after calling this function, size() is reliable for all sections
+    pub fn sync_all(&mut self) -> Result<(), Error> {
+        self.header.shstrndx = match self.sections.iter().position(|s|s.name == ".shstrtab") {
+            Some(i) => i as u16,
+            None => return Err(Error::MissingShstrtabSection),
+        };
+        let mut shstrtab = std::mem::replace(
+            &mut self.sections[self.header.shstrndx as usize].content, SectionContent::default());
 
         for sec in &mut self.sections {
-            sec.header.offset   = poff;
-            sec.header.addr     = voff;
-            poff += sec.size() as u64;
-            voff += sec.header.size;
-        };
+            sec.header.name = shstrtab.as_strtab_mut().unwrap().insert(sec.name.as_bytes().to_vec()) as u32;
+        }
+        self.sections[self.header.shstrndx as usize].content = shstrtab;
+
+
+        let mut dirty : Vec<usize> = (0..self.sections.len()).collect();
+        while dirty.len() > 0 {
+            for i in std::mem::replace(&mut dirty, Vec::new()).iter() {
+                //work around the borrow checker
+                let mut sec = std::mem::replace(&mut self.sections[*i], Section::default());
+                {
+                    let linked = {
+                        if sec.header.link < 1 || sec.header.link as usize >= self.sections.len() {
+                            None
+                        } else {
+                            dirty.push(sec.header.link as usize);
+                            self.load_at(sec.header.link as usize);
+                            Some(&mut self.sections[sec.header.link as usize].content)
+                        }
+                    };
+                    sec.sync(&self.header, linked)?;
+                }
+
+                //put it back in
+                self.sections[*i] = sec;
+            }
+        }
 
         Ok(())
     }
@@ -714,7 +789,7 @@ impl Elf {
             match sec.content {
                 SectionContent::Raw(ref v) => {
                     if off > sec.header.offset as usize {
-                        println!("BUG in elfkit caller: section layout is broken. \
+                        println!("BUG: section layout is broken. \
 would write section '{}' at position 0x{:x} over previous section that ended at 0x{:x}",
 sec.name, sec.header.offset, off);
                     }
@@ -741,6 +816,83 @@ sec.name, sec.header.offset, off);
 
         io.seek(SeekFrom::Start(0))?;
         self.header.to_writer(io)?;
+
+        Ok(())
+    }
+
+    //TODO the warnings need to be emited when calling store_all instead
+    pub fn remove_section(&mut self, at: usize) -> Result<(Section), Error> {
+        let r = self.sections.remove(at);
+
+        for sec in &mut self.sections {
+            if sec.header.link == at as u32{
+                sec.header.link = 0;
+                //println!("warning: removed section {} has a dangling link from {}", at, sec.name);
+            } else if sec.header.link > at as u32{
+                sec.header.link -= 1;
+            }
+
+            if sec.header.flags.contains(types::SectionFlags::INFO_LINK) {
+                if sec.header.info == at as u32{
+                    sec.header.info = 0;
+                   //println!("warning: removed section {} has a dangling info link from {}", at, sec.name);
+                } else if sec.header.info > at as u32{
+                    sec.header.info -= 1;
+                }
+            }
+        }
+
+        Ok((r))
+    }
+    pub fn insert_section(&mut self, at: usize, sec: Section) -> Result<(), Error> {
+        self.sections.insert(at, sec);
+
+        for sec in &mut self.sections {
+            if sec.header.link >= at as u32{
+                sec.header.link += 1;
+            }
+
+            if sec.header.flags.contains(types::SectionFlags::INFO_LINK) {
+                if sec.header.info > at as u32{
+                    sec.header.info += 1;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn move_section(&mut self, from: usize, mut to:usize) -> Result<(), Error> {
+        if to == from {
+            return Ok(())
+        }
+        if to > from {
+            to -= 1;
+        }
+
+
+        for sec in &mut self.sections {
+            if sec.header.link == from as u32{
+                sec.header.link = 999999;
+            }
+            if sec.header.flags.contains(types::SectionFlags::INFO_LINK) {
+                if sec.header.info == from as u32{
+                    sec.header.info = 999999;
+                }
+            }
+        }
+        let sec = self.remove_section(from)?;
+        self.insert_section(to, sec)?;
+        for sec in &mut self.sections {
+            if sec.header.link == 999999{
+                sec.header.link = to as u32;
+            }
+            if sec.header.flags.contains(types::SectionFlags::INFO_LINK) {
+                if sec.header.info == 999999{
+                    sec.header.info = to as u32;
+                }
+            }
+        }
 
         Ok(())
     }

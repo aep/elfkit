@@ -9,6 +9,7 @@ pub struct Strtab {
 }
 
 impl Strtab{
+    pub fn len(&self, _: &Header) -> usize {self.data.len()}
     pub fn entsize(eh: &Header) ->  usize { 1 }
     pub fn from_reader<R>(mut io: R, linked: Option<&SectionContent>, eh: &Header) -> Result<SectionContent, Error> where R: Read{
         let mut r = Strtab::default();
