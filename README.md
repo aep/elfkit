@@ -118,3 +118,4 @@ references
 - http://infocenter.arm.com/help/topic/com.arm.doc.ihi0044f/IHI0044F_aaelf.pdf
 - https://dmz-portal.imgtec.com/wiki/MIPS_ABI_Project
 - https://dmz-portal.imgtec.com/wiki/MIPS_O32_ABI_-_FR0_and_FR1_Interlinking
+- http://www.mindfruit.co.uk/2012/06/relocations-relocations.html#reloc_types_table

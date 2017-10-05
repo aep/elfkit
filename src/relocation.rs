@@ -3,6 +3,29 @@ use {Header, Error, SectionContent};
 use types;
 use num_traits::{FromPrimitive, ToPrimitive};
 
+/**
+A Represents the addend used to compute the value of the relocatable field.
+
+B Represents the base address at which a shared object has been loaded into memory
+during execution. Generally, a shared object is built with a 0 base virtual
+address, but the execution address will be different.
+
+G Represents the offset into the global offset table at which the relocation entry’s
+symbol will reside during execution.
+
+GOT Represents the address of the global offset table.
+
+L Represents the place (section offset or address) of the Procedure Linkage Table
+entry for a symbol.
+
+P Represents the place (section offset or address) of the storage unit being relocated
+-> that is the relocations offset in loaded memory, so for example a relocation at offset 0x3 in .text
+which is loaded at 0x100 will have P = 0x103
+
+S Represents the value of the symbol whose index resides in the relocation entry.
+The AMD64 ABI architectures uses only Elf64_Rela relocation entries
+with explicit addends. The r_addend member serves as the relocation addend.
+ */
 #[allow(non_camel_case_types)]
 #[derive(Debug, Primitive, PartialEq, Clone)]
 pub enum RelocationType {

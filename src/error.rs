@@ -25,6 +25,7 @@ pub enum Error {
     InvalidDynamicFlags1(u64),
     FirstSectionOffsetCanNotBeLargerThanAddress,
     MissingSymtabSection,
+    LinkedSectionIsNotSymtab,
 }
 
 impl From<::std::io::Error> for Error {

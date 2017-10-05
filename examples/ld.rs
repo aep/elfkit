@@ -20,55 +20,73 @@ use std::collections::HashMap;
 
 #[derive(Default)]
 struct Unit {
-    pub data: Vec<u8>,
-    pub text: Vec<u8>,
     pub symbols: Vec<Symbol>,
     pub dynrel: Vec<Relocation>,
 }
 
 impl Unit {
-    pub fn load(in_elf: &Elf) -> Result<Unit, elfkit::Error> {
+    pub fn load(in_elf: &Elf, out_elf: &mut Elf) -> Result<Unit, elfkit::Error> {
 
-        let mut r = Unit::default();
-
-        let mut shndx_text = 0;
-        let mut shndx_data = 0;
+        let mut symbols = Vec::new();
+        let mut dynrel  = Vec::new();
+        let mut sectionmap = HashMap::new();
 
         for (i, sec) in in_elf.sections.iter().enumerate() {
+            if sec.header.flags.contains(types::SectionFlags::ALLOC) {
+                sectionmap.insert(i as u16, out_elf.sections.len() as u16);
+                out_elf.sections.push(sec.clone());
+            }
             match (sec.name.as_ref(), &sec.content) {
-                (".text", &SectionContent::Raw(ref v)) => {shndx_text = i; r.text.extend(v);},
-                (".data", &SectionContent::Raw(ref v)) => {shndx_data = i; r.data.extend(v);},
-                (".symtab", &SectionContent::Symbols(ref v)) => {r.symbols.extend(v.iter().cloned());},
+                (".symtab", &SectionContent::Symbols(ref v)) => {symbols.extend(v.iter().cloned());},
                 _ => {},
             };
         }
+        out_elf.sync_all().unwrap();
+        Linker::relayout(out_elf, 0x300).unwrap();
+
+        for sym in &mut symbols {
+            if sym.shndx > 0 && sym.shndx < 65521 {
+                sym.shndx = match sectionmap.get(&sym.shndx) {
+                    Some(v) => *v,
+                    None => panic!(format!("error loading unit: section {} is not allocated, \
+                                           referenced in symbol {:?}", sym.shndx, sym)),
+                };
+            }
+        }
 
         for sec in in_elf.sections.iter() {
-            if sec.header.shtype == types::SectionType::RELA && sec.header.info == shndx_text as u32 {
-                let symtab = in_elf.sections[sec.header.link as usize].content.as_symbols().unwrap();
-                for reloc in  sec.content.as_relocations().unwrap() {
+            if sec.header.shtype == types::SectionType::RELA {
+                let reloc_target = match sectionmap.get(&(sec.header.info as u16)) {
+                    Some(v) => &out_elf.sections[*v as usize],
+                    None => panic!(format!("error loading unit: section {} is not allocated, \
+                                           referenced in section {}", sec.header.info, sec.name)),
+                };
+                let symtab = match in_elf.sections[sec.header.link as usize].content {
+                    SectionContent::Symbols(ref vv) => vv,
+                    _ => return Err(elfkit::Error::LinkedSectionIsNotSymtab),
+                };
+
+                for reloc in sec.content.as_relocations().unwrap() {
                     match reloc.rtype {
                         RelocationType::R_X86_64_NONE => {},
                         RelocationType::R_X86_64_64   => {
-                            let symbol = &symtab[reloc.sym as usize];
-                            if symbol.shndx == shndx_data as u16 {
-                                let value = (
-                                    r.data.len() as i64 +
-                                    symbol.value as i64 +
-                                    reloc.addend as i64)
-                                    as u64;
+                            let symbol  = &symtab[reloc.sym as usize];
+                            let absaddr = symbol.value + out_elf.sections[
+                                sectionmap[&symbol.shndx] as usize].header.addr;
 
-                                r.dynrel.push(Relocation{
-                                    rtype:  RelocationType::R_X86_64_RELATIVE,
-                                    sym:    0,
-                                    addr:   reloc.addr,
-                                    addend: value as i64,
-                                })
-                            } else {
-                                panic!(format!("relocation {:?} on symbol {:?} in unknown section",
-                                               reloc, symbol));
-                            }
+                            let value = (
+                                absaddr as i64 +
+                                reloc.addend as i64)
+                                as u64;
 
+                            dynrel.push(Relocation {
+                                rtype:  RelocationType::R_X86_64_RELATIVE,
+                                sym:    0,
+                                //TODO here's the only thing that is not stable between different
+                                //binaries. maybe we can do this differently in the future
+                                addr:   reloc_target.header.addr + reloc.addr,
+                                addend: value as i64,
+                            })
                         },
                         _ => panic!(format!("relocation {:?} not implemented",reloc)),
                     }
@@ -76,8 +94,10 @@ impl Unit {
             }
         }
 
-
-        Ok(r)
+        Ok(Unit{
+            symbols: symbols,
+            dynrel:  dynrel,
+        })
     }
 }
 
@@ -101,8 +121,6 @@ fn main() {
 
     let mut sc_interp  : Vec<u8> = b"/lib64/ld-linux-x86-64.so.2\0".to_vec();
     //let mut sc_interp  : Vec<u8> = b"/usr/local/musl/lib/libc.so\0".to_vec();
-    let mut sc_text    : Vec<u8> = Vec::new();
-    let mut sc_data    : Vec<u8> = Vec::new();
     let mut sc_dynsym  : Vec<Symbol>  = Vec::new();
     let mut sc_rela    : Vec<Relocation>  = Vec::new();
     let mut sc_dynamic : Vec<Dynamic> = vec![
@@ -122,32 +140,12 @@ fn main() {
                                        types::SectionFlags::ALLOC,
                                        SectionContent::Raw(sc_interp), 0,0));
 
-
-
-    let in_unit = Unit::load(&in_elf).unwrap();
-    sc_text = in_unit.text;
-    sc_data = in_unit.data;
-
-    let sh_index_mo_ae = out_elf.sections.len();
-    out_elf.sections.push(Section::new(".mo1.read", types::SectionType::PROGBITS,
-                                       types::SectionFlags::ALLOC | types::SectionFlags::WRITE | types::SectionFlags::EXECINSTR,
-                                       SectionContent::Raw(sc_text), 0,0));
-
-    out_elf.sections.push(Section::new(".mo1.write", types::SectionType::PROGBITS,
-                                       types::SectionFlags::ALLOC | types::SectionFlags::WRITE,
-                                       SectionContent::Raw(sc_data), 0,0));
-
     out_elf.sync_all().unwrap();
     Linker::relayout(&mut out_elf, 0x300).unwrap();
 
-    for mut rel in in_unit.dynrel {
-        rel.addr   += out_elf.sections[sh_index_mo_ae].header.addr;
-
-        //TODO: this only works for X86_64_RELATIVE
-        rel.addend += out_elf.sections[sh_index_mo_ae].header.addr as i64;
-        sc_rela.push(rel);
-    }
-
+    let mut unit = Unit::load(&in_elf, &mut out_elf).unwrap();
+    sc_dynsym.extend(unit.symbols.drain(..));
+    sc_rela.extend(unit.dynrel.drain(..));
 
 
     let sh_index_dynstr = out_elf.sections.len();
@@ -191,13 +189,21 @@ fn main() {
 
     out_elf.sync_all().unwrap();
     Linker::relayout(&mut out_elf, 0x300).unwrap();
+
+
     //find the start sym
-    for sym in in_unit.symbols {
-        if sym.name == "_start" {
-            out_elf.header.entry = out_elf.sections[sh_index_mo_ae].header.addr +  sym.value;
+    for sec in &out_elf.sections {
+        match (sec.name.as_ref(), &sec.content) {
+            (".dynsym", &SectionContent::Symbols(ref v)) => {
+                for sym in v{
+                    if sym.name == "_start" {
+                        out_elf.header.entry = out_elf.sections[sym.shndx as usize].header.addr + sym.value;
+                    }
+                }
+            },
+            _ => {},
         }
     }
-
 
     out_elf.segments = Linker::segments(&out_elf).unwrap();
 

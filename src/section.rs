@@ -74,7 +74,7 @@ impl SectionHeader {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum SectionContent {
     None,
     Raw(Vec<u8>),
@@ -124,7 +124,7 @@ impl SectionContent {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct Section {
     pub header:  SectionHeader,
     pub name:    String,
