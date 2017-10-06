@@ -112,6 +112,12 @@ impl SectionContent {
             _ => None,
         }
     }
+    pub fn as_raw_mut(&mut self) -> Option<&mut Vec<u8>> {
+        match self {
+            &mut SectionContent::Raw(ref mut v) => Some(v),
+            _ => None,
+        }
+    }
     pub fn size(&self, eh: &Header) -> usize {
         match self {
             &SectionContent::None => 0,

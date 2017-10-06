@@ -26,6 +26,7 @@ pub enum Error {
     FirstSectionOffsetCanNotBeLargerThanAddress,
     MissingSymtabSection,
     LinkedSectionIsNotSymtab,
+    UnexpectedSectionContent,
 }
 
 impl From<::std::io::Error> for Error {

@@ -114,6 +114,7 @@ alternatives
 references
 ---------------------
 - https://en.wikipedia.org/wiki/Executable_and_Linkable_Format
+- https://github.com/hjl-tools/x86-psABI/wiki/x86-64-psABI-r252.pdf
 - https://software.intel.com/sites/default/files/article/402129/mpx-linux64-abi.pdf
 - http://infocenter.arm.com/help/topic/com.arm.doc.ihi0044f/IHI0044F_aaelf.pdf
 - https://dmz-portal.imgtec.com/wiki/MIPS_ABI_Project

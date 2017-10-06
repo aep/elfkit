@@ -33,8 +33,13 @@ impl Unit {
 
         for (i, sec) in in_elf.sections.iter().enumerate() {
             if sec.header.flags.contains(types::SectionFlags::ALLOC) {
+                let mut sec = sec.clone();
+                //need writeble for reloc.
+                //TODO we should probably use GNU_RELRO or something
+                sec.header.flags.insert(types::SectionFlags::WRITE);
+
                 sectionmap.insert(i as u16, out_elf.sections.len() as u16);
-                out_elf.sections.push(sec.clone());
+                out_elf.sections.push(sec);
             }
             match (sec.name.as_ref(), &sec.content) {
                 (".symtab", &SectionContent::Symbols(ref v)) => {symbols.extend(v.iter().cloned());},
@@ -48,19 +53,21 @@ impl Unit {
             if sym.shndx > 0 && sym.shndx < 65521 {
                 sym.shndx = match sectionmap.get(&sym.shndx) {
                     Some(v) => *v,
-                    None => panic!(format!("error loading unit: section {} is not allocated, \
-                                           referenced in symbol {:?}", sym.shndx, sym)),
+                    None => 0,
                 };
             }
         }
 
         for sec in in_elf.sections.iter() {
             if sec.header.shtype == types::SectionType::RELA {
-                let reloc_target = match sectionmap.get(&(sec.header.info as u16)) {
-                    Some(v) => &out_elf.sections[*v as usize],
+                let (mut reloc_target,reloc_target_shndx) = match sectionmap.get(&(sec.header.info as u16)) {
+                    Some(v) => (
+                        std::mem::replace(&mut out_elf.sections[*v as usize], Section::default()),
+                        *v as usize),
                     None => panic!(format!("error loading unit: section {} is not allocated, \
-                                           referenced in section {}", sec.header.info, sec.name)),
+                                           referenced in reloc section {}", sec.header.info, sec.name)),
                 };
+
                 let symtab = match in_elf.sections[sec.header.link as usize].content {
                     SectionContent::Symbols(ref vv) => vv,
                     _ => return Err(elfkit::Error::LinkedSectionIsNotSymtab),
@@ -69,6 +76,8 @@ impl Unit {
                 for reloc in sec.content.as_relocations().unwrap() {
                     match reloc.rtype {
                         RelocationType::R_X86_64_NONE => {},
+
+                        // Symbol + Addend
                         RelocationType::R_X86_64_64   => {
                             let symbol  = &symtab[reloc.sym as usize];
                             let absaddr = symbol.value + out_elf.sections[
@@ -79,18 +88,53 @@ impl Unit {
                                 reloc.addend as i64)
                                 as u64;
 
+                            println!("delaying {:?} value {:x}", reloc, value);
                             dynrel.push(Relocation {
                                 rtype:  RelocationType::R_X86_64_RELATIVE,
                                 sym:    0,
-                                //TODO here's the only thing that is not stable between different
-                                //binaries. maybe we can do this differently in the future
                                 addr:   reloc_target.header.addr + reloc.addr,
                                 addend: value as i64,
-                            })
+                            });
+                        },
+
+                        //Symbol + Addend - Load address of the Global Offset Table
+                        RelocationType::R_X86_64_GOTOFF64 => {
+                            let symbol  = &symtab[reloc.sym as usize];
+                            println!("relocating {:?} symbol {:?}", reloc, symbol);
+                            let absaddr = symbol.value + out_elf.sections[
+                                sectionmap[&symbol.shndx] as usize].header.addr;
+
+                            let value = (
+                                absaddr as i64 +
+                                reloc.addend as i64)
+                                as u64;
+
+                            println!("relocating {:?} value {:x}", reloc, value);
+                        },
+
+                        //Symbol + Addend - relocation target section load address
+                        RelocationType::R_X86_64_PC32   => {
+                            let symbol  = &symtab[reloc.sym as usize];
+                            let absaddr = symbol.value + out_elf.sections[
+                                sectionmap[&symbol.shndx] as usize].header.addr;
+
+                            let value = (
+                                absaddr as i64 +
+                                reloc.addend as i64 -
+                                reloc_target.header.addr as i64 )
+                                as u32;
+
+                            println!("relocating {:?} value {:x}", reloc, value);
+                            //let mut io = &mut reloc_target.content.as_raw_mut().unwrap()[reloc.addr..];
+                            //elf_write_u32!(&out_elf.header, io, value);
+
                         },
                         _ => panic!(format!("relocation {:?} not implemented",reloc)),
                     }
                 }
+
+                out_elf.sections[reloc_target_shndx as usize] = reloc_target;
+
             }
         }
 
@@ -101,9 +145,12 @@ impl Unit {
     }
 }
 
+
+
 fn main() {
+    let out_filename = "/tmp/e";
+
     let in_filename  = env::args().nth(1).unwrap();
-    let out_filename = env::args().nth(2).unwrap();
     let mut in_file  = OpenOptions::new().read(true).open(in_filename).unwrap();
     let mut out_file = OpenOptions::new().write(true).truncate(true).create(true).open(out_filename).unwrap();
 
@@ -205,10 +252,13 @@ fn main() {
         }
     }
 
+    if out_elf.header.entry == 0 {
+        println!("warning: _start not found, entry address is set to 0x0");
+    }
+
     out_elf.segments = Linker::segments(&out_elf).unwrap();
 
 
     out_elf.store_all().unwrap();
     out_elf.to_writer(&mut out_file).unwrap();
 }
-

@@ -1,5 +1,6 @@
 use {Elf, Error, Header, SectionHeader, SegmentHeader, types, Dynamic};
 use dynamic::DynamicContent;
+use relocation::RelocationType;
 
 /**
  * high level linker stuff
@@ -191,9 +192,18 @@ impl Linker {
                         dhtype:  types::DynamicType::RELAENT,
                         content: DynamicContent::Address(sec.header.entsize),
                     });
+
+                    let first_non_rela = match sec.content.as_relocations() {
+                        None => return Err(Error::UnexpectedSectionContent),
+                        Some(v) => v.iter().position(|ref r| {
+                            r.rtype != RelocationType::R_X86_64_RELATIVE &&
+                                r.rtype != RelocationType::R_X86_64_JUMP_SLOT }).
+                            unwrap_or(v.len()),
+                    } as u64;
+
                     r.push(Dynamic{
                         dhtype:  types::DynamicType::RELACOUNT,
-                        content: DynamicContent::Address(sec.header.size / sec.header.entsize),
+                        content: DynamicContent::Address(first_non_rela),
                     });
                 },
                 _ => {},

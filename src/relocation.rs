@@ -63,6 +63,11 @@ pub enum RelocationType {
     R_X86_64_TLSDESC    = 36, // word64×2
     R_X86_64_IRELATIVE  = 37, // wordclass indirect (B + A)
     R_X86_64_RELATIVE64 = 38, // word64 B + A
+
+
+    //hopefully these are ok to be treated as R_X86_64_GOTPCREL
+    R_X86_64_GOTPCRELX  = 41, // word32 G + GOT + A - P
+    R_X86_64_REX_GOTPCRELX = 42, //word32 G + GOT + A - P
 }
 impl Default for RelocationType{
     fn default() -> Self {RelocationType::R_X86_64_NONE}
@@ -102,7 +107,11 @@ impl Relocation {
             let rtype = (info & 0xffffffff) as u32;
             let rtype = match RelocationType::from_u32(rtype) {
                 Some(v) => v,
-                None => continue,
+                None => {
+                    println!("warning: unknown relocation type {} skipped while reading", rtype);
+                    elf_read_u64!(eh, io)?;
+                    continue
+                },
             };
 
             let addend  = elf_read_u64!(eh, io)?;

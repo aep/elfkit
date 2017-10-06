@@ -172,7 +172,7 @@ fn main() {
                 println!("  Offset           Type            Symbol           Addend");
 
                 for reloc in relocs {
-                    println!("  {} {:<15.15} {: <16.16x} {: <16.16x}",
+                    println!("  {} {:<15.15} {: <16.16x} {: <16.16}",
                              hextab(16, reloc.addr), &format!("{:?}", reloc.rtype)[2..], reloc.sym, reloc.addend);
                 }
             },

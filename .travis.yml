@@ -1,0 +1,11 @@
+language: rust
+rust:
+  - stable
+addons:
+  apt:
+    packages:
+    - nasm
+script:
+  - cargo build --verbose --all
+  - cd $TRAVIS_BUILD_DIR/tests/samples && make
+  - cd $TRAVIS_BUILD_DIR/tests/ld && ./test.sh
