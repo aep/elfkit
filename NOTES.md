@@ -39,6 +39,9 @@ according to the glibc code (untested) these additional relocations should work:
   - R_X86_64_IRELATIVE
 
 
+there's also DT_TEXTREL, which may contain even more relocation types. it seems to be a count offset into DT_RELA
+
+
 useful debugging help
 ------------------------
 

@@ -257,14 +257,6 @@ impl Elf {
             Some(i) => i as u16,
             None => return Err(Error::MissingShstrtabSection),
         };
-        let mut shstrtab = std::mem::replace(
-            &mut self.sections[self.header.shstrndx as usize].content, SectionContent::default());
-
-        for sec in &mut self.sections {
-            sec.header.name = shstrtab.as_strtab_mut().unwrap().insert(sec.name.as_bytes().to_vec()) as u32;
-        }
-        self.sections[self.header.shstrndx as usize].content = shstrtab;
-
         loop {
             let mut still_need_to_store = false;
             for i in 0..self.sections.len(){

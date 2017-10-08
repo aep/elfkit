@@ -201,10 +201,21 @@ impl Linker {
                             unwrap_or(v.len()),
                     } as u64;
 
-                    r.push(Dynamic{
-                        dhtype:  types::DynamicType::RELACOUNT,
-                        content: DynamicContent::Address(first_non_rela),
-                    });
+
+                    if first_non_rela > 0 {
+                        r.push(Dynamic{
+                            dhtype:  types::DynamicType::RELACOUNT,
+                            content: DynamicContent::Address(first_non_rela),
+                        });
+                    }
+
+                    if first_non_rela < sec.content.as_relocations().unwrap().len() as u64{
+                        r.push(Dynamic{
+                            dhtype:  types::DynamicType::TEXTREL,
+                            content: DynamicContent::Address(first_non_rela),
+                        });
+
+                    }
                 },
                 _ => {},
             }

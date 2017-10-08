@@ -1,6 +1,6 @@
 #!/bin/sh
 
-build_and_assert_fox() {
+link_and_assert_fox() {
     cargo run --example ld "$@"
     chmod +x /tmp/e
     output=$(/tmp/e)
@@ -15,5 +15,6 @@ build_and_assert_fox() {
 }
 
 
-build_and_assert_fox ../samples/simple_asm.o
+link_and_assert_fox ../samples/simple_asm.o
+link_and_assert_fox ../samples/dx_main.o ../samples/dx_data.o
 

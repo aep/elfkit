@@ -1,12 +1,30 @@
-ALL: amd64_pie_asm amd64_pie_c
+ALL: amd64_pie_asm amd64_pie_c dx_asm dx_asm_dyn
 
 CFLAGS=-fPIC
 
+
 simple_asm.o: simple.asm
-	nasm -f elf64 -o $@ $<
+	nasm -f elf64 -o $@ $^
 
 amd64_pie_asm: simple_asm.o
-	ld -o $@ -pie $<
+	ld -o $@ -pie $^
 
 amd64_pie_c:   main_c.o
-	gcc -fPIC -o $@ -pie $<
+	gcc -fPIC -o $@ -pie $^
+
+
+
+dx_data.o: dx_data.asm
+	nasm -f elf64 -o $@ $^
+
+dx_main.o: dx_main.asm
+	nasm -f elf64 -o $@ $^
+
+dx_asm: dx_data.o dx_main.o
+	ld -o $@ -pie $^
+
+
+libdxdata.so: dx_data.o
+	gcc $^ -shared -o $@
+dx_asm_dyn: libdxdata.so dx_main.o
+	ld -o $@ -pie $^

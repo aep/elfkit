@@ -4,6 +4,7 @@ extern crate colored;
 use std::env;
 use std::fs::File;
 use elfkit::{Elf, SectionContent, DynamicContent, types};
+use elfkit::relocation::RelocationType;
 use std::io::{Read, Seek, SeekFrom};
 use colored::*;
 
@@ -172,8 +173,17 @@ fn main() {
                 println!("  Offset           Type            Symbol           Addend");
 
                 for reloc in relocs {
-                    println!("  {} {:<15.15} {: <16.16x} {: <16.16}",
-                             hextab(16, reloc.addr), &format!("{:?}", reloc.rtype)[2..], reloc.sym, reloc.addend);
+                    print!("  {} {:<15.15} {: <16.16x}",
+                             hextab(16, reloc.addr), &format!("{:?}", reloc.rtype)[2..], reloc.sym);
+                    match reloc.rtype {
+                        RelocationType::R_X86_64_RELATIVE => {
+                            println!("0x{:<16.16x}", reloc.addend);
+                        },
+                        _ => {
+                            println!("{: <18.18}", reloc.addend);
+                        }
+
+                    }
                 }
             },
             SectionContent::Symbols(ref symbols) => {
