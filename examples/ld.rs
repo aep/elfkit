@@ -109,7 +109,7 @@ impl Unit {
                             if symbol.shndx == 0 {
                                 rela.push(Relocation {
                                     rtype:  RelocationType::R_X86_64_64,
-                                    sym:    reloc.sym, //FIXME: this offset will change with multiple units,
+                                    sym:    reloc.sym,
                                     addr:   reloc_target.header.addr + reloc.addr,
                                     addend: reloc.addend,
                                 });
@@ -131,6 +131,7 @@ impl Unit {
                         },
 
                         //Symbol + Addend - Load address of the Global Offset Table
+                        /*
                         RelocationType::R_X86_64_GOTOFF64 => {
                             let symbol  = &symbols[reloc.sym as usize];
                             let value = (
@@ -140,23 +141,21 @@ impl Unit {
 
                             println!("relocating {:?} value {:x}", reloc, value);
                         },
+                        */
 
                         //Symbol + Addend - relocation target section load address
                         RelocationType::R_X86_64_PC32   => {
                             let symbol  = &symbols[reloc.sym as usize];
-                            let absaddr = symbol.value + out_elf.sections[
-                                sectionmap[&symbol.shndx] as usize].header.addr;
-
-                            let value = (
-                                absaddr as i64 +
-                                reloc.addend as i64 -
-                                reloc_target.header.addr as i64 )
-                                as u32;
-
-                            println!("relocating {:?} value {:x}", reloc, value);
-                            //let mut io = &mut reloc_target.content.as_raw_mut().unwrap()[reloc.addr..];
-                            //elf_write_u32!(&out_elf.header, io, value);
-
+                            if symbol.shndx != 0 {
+                                panic!(format!("unexpected defined symbol {:?} for relocation {:?}", symbol, reloc));
+                            }
+                            rela.push(Relocation {
+                                rtype:  RelocationType::R_X86_64_PC32,
+                                sym:    reloc.sym,
+                                addr:   reloc_target.header.addr + reloc.addr,
+                                addend: reloc.addend,
+                            });
+                            println!("delaying undefined {:?}", reloc);
                         },
                         _ => panic!(format!("loading relocation {:?} not implemented",reloc)),
                     }
@@ -230,7 +229,9 @@ fn main() {
     let mut link_lookup = Symtab::default();
     for unit in &mut units {
         for sym in &unit.symbols {
-            link_lookup.insert(sym.clone());
+            if sym.shndx != 0 {
+                link_lookup.insert(sym.clone());
+            }
         }
     }
 
@@ -243,7 +244,7 @@ fn main() {
             };
 
             let symbol = match link_lookup.get(&symbol.name) {
-                None => panic!(format!("undefined reference to {}", symbol.name)),
+                None => panic!(format!("undefined reference to {:?}", symbol)),
                 Some(s) => s,
             };
 
@@ -258,15 +259,26 @@ fn main() {
                         reloc.addend as i64)
                         as i64;
 
-                    println!("linking {:?} value {:x}", reloc, value);
+                    println!("emitting RELA for {:?} value {:x}", reloc, value);
                     sc_rela.push(Relocation {
                         rtype:  RelocationType::R_X86_64_RELATIVE,
                         sym:    0,
                         addr:   reloc.addr,
                         addend: value as i64,
                     });
-
                 },
+                RelocationType::R_X86_64_PC32 => {
+                    println!("emitting TEXTREL for {:?} -> {:?}", reloc, symbol);
+                    let mut symbol = symbol.clone();
+                    symbol.bind = types::SymbolBind::LOCAL;
+                    let sym = sc_dynsym.insert(symbol);
+                    sc_rela.push(Relocation {
+                        rtype:  RelocationType::R_X86_64_PC32,
+                        sym:    sym as u32,
+                        addr:   reloc.addr,
+                        addend: reloc.addend,
+                    });
+                }
                 _ => panic!(format!("linking relocation {:?} not implemented",reloc)),
             };
         }
@@ -294,6 +306,8 @@ fn main() {
                                        types::SectionFlags::ALLOC,
                                        SectionContent::Symbols(sc_dynsym),
                                        sh_index_dynstr as u32, first_global_dynsym as u32));
+
+    sc_rela.sort_unstable_by(|a,b| if a.rtype == RelocationType::R_X86_64_RELATIVE { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater} );
 
     out_elf.sections.push(Section::new(".rela.dyn", types::SectionType::RELA,
                                        types::SectionFlags::ALLOC,

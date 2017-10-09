@@ -1,4 +1,4 @@
-ALL: amd64_pie_asm amd64_pie_c dx_asm dx_asm_dyn px_asm
+ALL: amd64_pie_asm amd64_pie_c dx_asm dx_asm_dyn px_asm px_asm_dyn
 
 CFLAGS=-fPIC
 
@@ -38,4 +38,10 @@ px_hello.o: px_hello.asm
 	nasm -f elf64 -o $@ $^
 
 px_asm: px_main.o px_hello.o dx_data.o
+	ld -o $@ -pie $^
+
+libpxhello.so: px_hello.o
+	gcc $^ -shared -o $@
+
+px_asm_dyn: libdxdata.so libpxhello.so px_main.o
 	ld -o $@ -pie $^

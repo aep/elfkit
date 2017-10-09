@@ -1,7 +1,7 @@
 extern msg2;
 
 section .text
-    global hello
+    global hello:func
 hello:
     mov     rax, 1
     mov     rdi, 1
