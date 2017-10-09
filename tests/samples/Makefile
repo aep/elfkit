@@ -25,7 +25,7 @@ dx_asm: dx_data.o dx_main.o
 
 
 libdxdata.so: dx_data.o
-	gcc $^ -shared -o $@
+	gcc -fPIC $^ -shared -o $@
 dx_asm_dyn: libdxdata.so dx_main.o
 	ld -o $@ -pie $^
 
@@ -41,7 +41,7 @@ px_asm: px_main.o px_hello.o dx_data.o
 	ld -o $@ -pie $^
 
 libpxhello.so: px_hello.o
-	gcc $^ -shared -o $@
+	gcc -fPIC $^ -shared -o $@
 
 px_asm_dyn: libdxdata.so libpxhello.so px_main.o
-	ld -o $@ -pie $^
+	ld -o $@ -pie $^ || true

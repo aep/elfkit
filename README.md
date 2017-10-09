@@ -1,5 +1,4 @@
 [![Build Status](https://travis-ci.org/aep/elfkit.svg?branch=master)](https://travis-ci.org/aep/elfkit)
-[![codecov](https://codecov.io/gh/aep/elfkit/branch/master/graph/badge.svg)](https://codecov.io/gh/aep/elfkit)
 [![crates.io](http://meritbadge.herokuapp.com/elfkit)](https://crates.io/crates/elfkit)
 [![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE-MIT)
 [![docs](https://docs.rs/elfkit/badge.svg)](https://docs.rs/elfkit)
