@@ -1,4 +1,4 @@
-ALL: amd64_pie_asm amd64_pie_c dx_asm dx_asm_dyn px_asm px_asm_dyn plt_asm
+ALL: amd64_pie_asm amd64_pie_c dx_asm dx_asm_dyn px_asm px_asm_dyn plt_asm plt_asm_dyn
 
 CFLAGS=-fPIC
 
@@ -39,4 +39,7 @@ px_asm_dyn: libdxdata.so libpxhello.so px_main.o
 	ld -o $@ -pie $^ || true
 
 plt_asm: plt_main.o px_hello.o dx_data.o
+	ld -o $@ -pie $^
+
+plt_asm_dyn: libdxdata.so libpxhello.so plt_main.o
 	ld -o $@ -pie $^

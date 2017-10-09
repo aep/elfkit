@@ -189,7 +189,9 @@ impl Section {
             },
             SectionContent::None | SectionContent::Raw(_) => {},
         }
-        self.header.size = self.size(eh) as u64;
+        if self.header.shtype != types::SectionType::NOBITS {
+            self.header.size = self.size(eh) as u64;
+        }
         Ok(())
     }
 }

@@ -240,14 +240,15 @@ impl Linker {
             poff += sec.size(&elf.header) as u64;
         };
 
-        let mut voff = 0;
-        for sec in &mut elf.sections {
+        let mut voff = pstart;
+        for sec in &mut elf.sections[1..] {
             //TODO ld does this. maybe can't have address 0 write mapped?
             //i need to figure out how exactly this is supposed to work
-            if sec.header.flags.contains(types::SectionFlags::WRITE) {
-                voff = 0x200000;
+            if sec.header.flags.contains(types::SectionFlags::WRITE) && voff < 0x200000 {
+                voff += 0x200000;
             }
-            sec.header.addr = voff + sec.header.offset;
+            sec.header.addr = voff;
+            voff += sec.header.size;
         }
         Ok(())
     }

@@ -130,6 +130,24 @@ impl Unit {
                             }
                         },
 
+                        // Procedure Linkage Table Entry for Symbol + Addend - relocation target section load address
+                        RelocationType::R_X86_64_PLT32 => {
+                            //TODO why does this work for PLT?
+                            //doesn't PLT expect an address to an address?
+
+                            let symbol  = &symbols[reloc.sym as usize];
+                            if symbol.shndx != 0 {
+                                panic!(format!("unexpected defined symbol {:?} for relocation {:?}", symbol, reloc));
+                            }
+                            rela.push(Relocation {
+                                rtype:  RelocationType::R_X86_64_PC32,
+                                sym:    reloc.sym,
+                                addr:   reloc_target.header.addr + reloc.addr,
+                                addend: reloc.addend,
+                            });
+                            println!("delaying undefined {:?}", reloc);
+                        },
+
                         //Symbol + Addend - Load address of the Global Offset Table
                         /*
                         RelocationType::R_X86_64_GOTOFF64 => {
