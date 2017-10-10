@@ -170,11 +170,28 @@ fn main() {
                 println!("");
                 println!("{} relocation section at offset 0x{:x}:",
                          section.name.bold(), section.header.offset);
-                println!("  Offset           Type            Symbol           Addend");
+                println!("  Offset           Type            Symbol               Addend");
 
                 for reloc in relocs {
-                    print!("  {} {:<15.15} {: <16.16x}",
-                             hextab(16, reloc.addr), &format!("{:?}", reloc.rtype)[2..], reloc.sym);
+                    print!("  {} {:<15.15} ",
+                             hextab(16, reloc.addr), &format!("{:?}", reloc.rtype)[2..]);
+
+                    elf.sections.get(section.header.link as usize)
+                        .and_then(|sec|{
+                            sec.content.as_symbols()
+                        }).and_then(|symbols|{
+                            symbols.get(reloc.sym as usize)
+                        }).and_then(|symbol| {
+                            if symbol.name.len() > 0 {
+                                print!("{: <20.20} ", symbol.name);
+                                Some(())
+                            } else {
+                                None
+                            }
+                        }).unwrap_or_else(||{
+                            print!("{: <20.20} ", reloc.sym);
+                        });
+
                     match reloc.rtype {
                         RelocationType::R_X86_64_RELATIVE => {
                             println!("0x{:<16.16x}", reloc.addend);
@@ -182,7 +199,6 @@ fn main() {
                         _ => {
                             println!("{: <18.18}", reloc.addend);
                         }
-
                     }
                 }
             },

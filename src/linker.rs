@@ -158,6 +158,12 @@ impl Linker {
 
         for sec in &elf.sections {
             match sec.name.as_ref() {
+                ".hash" => {
+                    r.push(Dynamic{
+                        dhtype: types::DynamicType::HASH,
+                        content: DynamicContent::Address(sec.header.addr),
+                    });
+                },
                 ".dynstr" => {
                     r.push(Dynamic{
                         dhtype: types::DynamicType::STRTAB,
