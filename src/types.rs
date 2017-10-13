@@ -378,10 +378,6 @@ pub enum SymbolBind {
     GLOBAL      = 1,
     /// Weak symbol
     WEAK        = 2,
-    /// Number of defined types
-    NUM         = 3,
-    /// Unique symbol
-    GNU_UNIQUE  = 10,
 }
 impl Default for SymbolBind{
     fn default() -> Self {SymbolBind::LOCAL}
@@ -402,6 +398,7 @@ pub enum SymbolVis {
 impl Default for SymbolVis{
     fn default() -> Self {SymbolVis::DEFAULT}
 }
+
 
 
 #[allow(non_camel_case_types)]

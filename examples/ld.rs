@@ -1,188 +1,145 @@
+extern crate colored;
 #[macro_use] extern crate elfkit;
-#[macro_use] extern crate itertools;
 extern crate byteorder;
-
-use itertools::Itertools;
+extern crate goblin;
 
 use std::env;
+use std::io::{Read, Seek,Cursor};
 use std::fs::OpenOptions;
 use elfkit::{
-    Elf, Header, types, SegmentHeader, Section, SectionContent,
-    SectionHeader, Dynamic, Symbol, Relocation, Strtab};
+    Elf, Header, types, SegmentHeader, Section, SectionContent, Error,
+    SectionHeader, Dynamic, Symbol, Relocation, Strtab, SymbolSectionIndex};
 
-use elfkit::linker::Linker;
+use elfkit::filetype;
+use elfkit::linker;
 
 use elfkit::dynamic::DynamicContent;
 use elfkit::relocation::RelocationType;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::collections::hash_map::Entry;
 use std::path::Path;
+use colored::*;
 
-
-#[derive(Default)]
-struct Unit {
-    pub symbols:        Vec<Symbol>,
-    pub relocations:    Vec<Relocation>,
+pub fn fail(msg: String) -> ! {
+    println!("{}", msg.red());
+    panic!("abort");
 }
 
-impl Unit {
-    pub fn load(in_elf: &Elf, out_elf: &mut Elf, name: &str)
-        -> Result<Unit, elfkit::Error> {
-
-        let mut symbols     = Vec::new();
-        let mut rela        = Vec::new();
-        let mut sectionmap  = HashMap::new();
-
-        // 1. PROGBITS
-
-        for (i, sec) in in_elf.sections.iter().enumerate() {
-            if sec.header.flags.contains(types::SectionFlags::ALLOC) {
-                let mut sec = sec.clone();
-                //need writeble for reloc.
-                //TODO we should probably use GNU_RELRO or something
-                sec.header.flags.insert(types::SectionFlags::WRITE);
-
-                sectionmap.insert(i as u16, out_elf.sections.len() as u16);
-                sec.name.insert_str(0, name);
-                out_elf.sections.push(sec);
+fn resursive_insert(candidates: &mut HashMap<u64, Unit>, lookup: &mut Lookup,
+                    unit: Unit, promise_insert: &mut HashSet<u64>) {
+    promise_insert.insert(unit.global_id);
 
 
-            }
+    for id in unit.symbols.iter().filter_map(|sym| {
+        if let SymbolSectionIndex::Global(id) = sym.shndx {
+            Some(id)
+        } else {
+            None
         }
-
-        out_elf.sync_all().unwrap();
-        Linker::relayout(out_elf, 0x300).unwrap();
-
-        // 2. SYMTAB
-
-        let mut symtab_shndx = 0;
-        for (i, sec) in in_elf.sections.iter().enumerate() {
-            match sec.header.shtype {
-                types::SectionType::SYMTAB => {
-                    if symtab_shndx > 0 {
-                        panic!(format!("error loading '{}': found SYMTAB section at {} but there already was one at {}\n
-                                 it's theoretically possible to link using multiple SYMTAB sections\n
-                                 if you really need that, open a bug report",
-                                 name, i, symtab_shndx));
-                        continue;
-                    }
-                    symtab_shndx = i;
-
-                    for sym in sec.content.as_symbols().unwrap() {
-                        let mut sym = sym.clone();
-                        if sym.shndx > 0 && sym.shndx < 65521 {
-                            sym.shndx = match sectionmap.get(&sym.shndx) {
-                                None => 0,
-                                Some(v) => *v,
-                            };
-                            sym.value += out_elf.sections[sym.shndx as usize].header.addr;
-                        }
-                        symbols.push(sym);
-                    }
+    }).chain(unit.siblings.iter().cloned()) {
+        if id != unit.global_id && !promise_insert.contains(&id) && lookup.by_id.get(&id) == None {
+            match candidates.remove(&id) {
+                Some(unit) =>  {
+                    resursive_insert(candidates, lookup, unit, promise_insert);
                 },
-                _ => {},
-            }
+                None => panic!("bug in elfkit linker: {} dependant unit {} not found", unit.name, id),
+            };
         }
-
-        // 3. RELA
-
-        for sec in in_elf.sections.iter() {
-            if sec.header.shtype == types::SectionType::RELA {
-                let (mut reloc_target,reloc_target_shndx) = match sectionmap.get(&(sec.header.info as u16)) {
-                    None => {println!("warning: section {} is not allocated, \
-                                     referenced in reloc section {}", sec.header.info, sec.name); continue},
-                    Some(v) => (
-                        std::mem::replace(&mut out_elf.sections[*v as usize], Section::default()),
-                        *v as usize),
-                };
-
-                if symtab_shndx != sec.header.link as usize {
-                    panic!(format!("error loading '{}' section '{}' sec.header.link({}) != symtab_shndx({})", 
-                                   name, sec.name, sec.header.link, symtab_shndx));
-                }
-
-                for reloc in sec.content.as_relocations().unwrap() {
-                    match reloc.rtype {
-                        RelocationType::R_X86_64_NONE => {},
-
-                        // Symbol + Addend
-                        RelocationType::R_X86_64_64   => {
-                            let symbol  = &symbols[reloc.sym as usize];
-                            if symbol.shndx == 0 {
-                                rela.push(Relocation {
-                                    rtype:  RelocationType::R_X86_64_64,
-                                    sym:    reloc.sym,
-                                    addr:   reloc_target.header.addr + reloc.addr,
-                                    addend: reloc.addend,
-                                });
-                                println!("delaying undefined {:?}", reloc);
-                            } else {
-                                let value = (
-                                    symbol.value as i64 +
-                                    reloc.addend as i64)
-                                    as u64;
-
-                                println!("linking local {:?} -> {:?} value {:x}", reloc, symbol, value);
-                                rela.push(Relocation {
-                                    rtype:  RelocationType::R_X86_64_RELATIVE,
-                                    sym:    0,
-                                    addr:   reloc_target.header.addr + reloc.addr,
-                                    addend: value as i64,
-                                });
-                            }
-                        },
-
-
-                        //TODO we're not emitting a PLT or GOT. see NOTES.md
-
-
-                        RelocationType::R_X86_64_PLT32  |
-                        RelocationType::R_X86_64_REX_GOTPCRELX  |
-                            RelocationType:: R_X86_64_GOTPCREL |
-                            RelocationType::R_X86_64_GOTPCRELX => {
-                            rela.push(Relocation {
-                                rtype:  RelocationType::R_X86_64_PC32,
-                                sym:    reloc.sym,
-                                addr:   reloc_target.header.addr + reloc.addr,
-                                addend: reloc.addend,
-                            });
-                            println!("delaying {:?}", reloc);
-                        }
-
-
-
-                        //Symbol + Addend - relocation target section load address
-                        RelocationType::R_X86_64_PC32   => {
-                            rela.push(Relocation {
-                                rtype:  RelocationType::R_X86_64_PC32,
-                                sym:    reloc.sym,
-                                addr:   reloc_target.header.addr + reloc.addr,
-                                addend: reloc.addend,
-                            });
-                            println!("delaying undefined {:?}", reloc);
-                        },
-                        _ => panic!(format!("loading relocation {:?} not implemented",reloc)),
-                    }
-                }
-
-                out_elf.sections[reloc_target_shndx as usize] = reloc_target;
-
-            }
-        }
-
-        Ok(Unit{
-            symbols:    symbols,
-            relocations: rela,
-        })
     }
+    lookup.insert_unit(unit);
 }
-
 
 fn main() {
+    let mut elfs   = elfs_from_cli();
+    let mut lookup = Lookup::default();
+
+    let mut start  = Symbol::default();
+    start.name     = String::from("_start");
+    start.bind     = types::SymbolBind::GLOBAL;
+    let mut got    = Symbol::default();
+    got.name       = String::from("_GLOBAL_OFFSET_TABLE_"); //TODO
+    got.shndx      = SymbolSectionIndex::Section(1);
+    got.bind       = types::SymbolBind::GLOBAL;
+    lookup.insert_unit(Unit::fake(String::from("exe"), LinkBehaviour::Static, vec![start, got]));
+
+    let mut global_id_counter = 10;
+    let mut candidates = HashMap::new();
+
+    loop {
+        println!("lookup iteration");
+        let missing = lookup.symbols.iter().enumerate().filter_map(|(i, ref sym)|{
+            if sym.shndx == SymbolSectionIndex::Undefined && sym.bind == types::SymbolBind::GLOBAL {
+                Some(i)
+            } else {
+                None
+            }
+        }).collect::<Vec<usize>>();
+
+        if missing.len() < 1 {
+            break;
+        }
+
+        for mi in missing {
+            let mut found = None;
+            let was_needed_by = lookup.units[lookup.symbols2units[&mi]].name.clone();
+
+            let mut cont = true;
+            while cont {
+                cont = false;
+                for ei in 0..elfs.len() {
+                    if elfs[ei].1.contains_symbol(&lookup.symbols[mi].name).unwrap() {
+                        let elf = elfs.swap_remove(ei);
+                        for unit in Unit::from_elf(elf.0, elf.1, &mut global_id_counter) {
+                            candidates.insert(unit.global_id.clone(), unit);
+                        }
+                        cont = true;
+                        break;
+                    }
+                }
+            }
+
+
+            for (id, candidate) in candidates.iter() {
+                for sym in candidate.lookup(&lookup.symbols[mi].name) {
+                    if sym.shndx != SymbolSectionIndex::Undefined {
+                        found = Some(id.clone());
+                        break;
+                    }
+                }
+            }
+
+            if let Some(id) = found  {
+                let unit = candidates.remove(&id).unwrap();
+                resursive_insert(&mut candidates, &mut lookup, unit, &mut HashSet::new());
+
+                println!(" - {} <= {} <= {} ", was_needed_by,
+                         &lookup.symbols[mi].name,
+                         lookup.units[lookup.symbols2units[&mi]].name,
+                         );
+
+                //integrity check
+                if lookup.symbols[mi].shndx == SymbolSectionIndex::Undefined {
+                    panic!("BUG in elfkit lookup: symbol {:?} is still undefined after inserting unit where Unit:lookup() returned a defined symbol",
+                    lookup.symbols[mi]);
+                }
+
+            } else {
+                let sym = &lookup.symbols[mi];
+                if sym.shndx == SymbolSectionIndex::Undefined && sym.bind == types::SymbolBind::GLOBAL {
+                    fail(format!("{}: undefined reference to {}",
+                                   lookup.units[lookup.symbols2units[&mi]].name,
+                                   lookup.symbols[mi].name));
+                }
+            }
+        }
+    }
+
+
+    println!("linking {} units into exe", lookup.units.len());
+
     let out_filename = "/tmp/e";
-
     let mut out_file = OpenOptions::new().write(true).truncate(true).create(true).open(out_filename).unwrap();
-
     let mut out_elf = Elf::default();
     out_elf.header.ident_class      = types::Class::Class64;
     out_elf.header.ident_endianness = types::Endianness::LittleEndian;
@@ -191,160 +148,195 @@ fn main() {
     out_elf.header.machine          = types::Machine::X86_64;
 
     let mut sc_interp  : Vec<u8> = b"/lib64/ld-linux-x86-64.so.2\0".to_vec();
-    let mut sc_symtab  : Vec<Symbol>  = vec![Symbol::default()];
-    let mut sc_dynsym  = Symtab::from_vec(vec![Symbol::default()]);
     let mut sc_rela    : Vec<Relocation>  = Vec::new();
-    let mut sc_dynamic : Vec<Dynamic> = vec![
+    let mut sc_dynsym  : Vec<Symbol>    = vec![Symbol::default()];
+    let mut sc_dynamic : Vec<Dynamic>   = vec![
         Dynamic{
             dhtype: types::DynamicType::FLAGS_1,
             content: DynamicContent::Flags1(types::DynamicFlags1::PIE),
         },
+        Dynamic{
+            dhtype: types::DynamicType::RPATH,
+            content: DynamicContent::String(String::from("/home/aep/proj/musl/lib/")),
+        },
     ];
+    let mut sc_symtab : Vec<Symbol> = vec![Symbol::default()];
 
 
     out_elf.sections.insert(0, Section::default());
-    out_elf.sections.push(Section::new(".interp", types::SectionType::PROGBITS,
+    out_elf.sections.push(Section::new(String::from(".interp"), types::SectionType::PROGBITS,
                                        types::SectionFlags::ALLOC,
                                        SectionContent::Raw(sc_interp), 0,0));
 
     out_elf.sync_all().unwrap();
-    Linker::relayout(&mut out_elf, 0x300).unwrap();
+    linker::relayout(&mut out_elf, 0x300).unwrap();
 
 
-    let mut link_lookup = Symtab::default();
-    let mut units = Vec::new();
+    //sort units by segment
+    lookup.units.sort_unstable_by(|a,b| {
+        a.segment.cmp(&b.segment)
+    });
 
-    for in_path in env::args().skip(1) {
-        let mut in_file  = OpenOptions::new().read(true).open(&in_path).unwrap();
-        let mut in_elf  = Elf::from_reader(&mut in_file).unwrap();
-        let in_name = Path::new(&in_path).file_name().unwrap().to_string_lossy().into_owned();
-        match in_elf.header.etype {
-            types::ElfType::REL => {
-                println!("loading unit {}", in_path);
-                in_elf.load_all().unwrap();
+    //layout all the units
+    let mut global2section = HashMap::new();
+    for unit in &mut lookup.units {
 
-                let mut unit = Unit::load(&in_elf, &mut out_elf, &in_name).unwrap();
+        assert!(unit.code.len() > 0,
+        format!("trying to link unit size == 0 '{}'", unit.name));
 
-                //for debugging
-                sc_symtab.extend(unit.symbols.iter().cloned());
-                units.push(unit);
-            },
-            types::ElfType::DYN => {
-                println!("loading so {}", in_path);
-                sc_dynamic.push(Dynamic{
-                    dhtype: types::DynamicType::NEEDED,
-                    content: DynamicContent::String(in_name),
-                });
-                in_elf.load_all().unwrap();
-                for sec in &in_elf.sections {
-                    if sec.header.shtype == types::SectionType::DYNSYM {
-                        for mut sym in sec.content.as_symbols().unwrap().iter().cloned() {
-                            sym.shndx = 0;
-                            sym.value = 0;
-                            sym.size  = 0;
-                            link_lookup.insert(sym);
-                        }
-                    }
+        let mut sec = match unit.segment {
+            UnitSegment::Executable | UnitSegment::Data => {
+                let mut flags = types::SectionFlags::ALLOC | types::SectionFlags::WRITE;
+                if unit.segment == UnitSegment::Executable {
+                    flags.insert(types::SectionFlags::EXECINSTR);
                 }
+                Section::new(unit.name.clone(), types::SectionType::PROGBITS, flags,
+                SectionContent::Raw(std::mem::replace(&mut unit.code, Vec::new())), 0, 0)
             },
-            other => {
-                panic!(format!("{}: unable to link elf objects of type {:?}", in_path, other));
+            UnitSegment::Bss => {
+                let mut sec = Section::new(unit.name.clone(), types::SectionType::NOBITS,
+                    types::SectionFlags::ALLOC | types::SectionFlags::WRITE,
+                    SectionContent::None, 0,0);
+                sec.header.size = unit.code.len() as u64;
+                sec
             }
-        }
+        };
+
+        global2section.insert(unit.global_id, out_elf.sections.len());
+        out_elf.sections.push(sec);
     }
 
-    for unit in &mut units {
-        for mut sym in unit.symbols.iter().cloned() {
-            if sym.shndx > 0 {
-                sym.bind = types::SymbolBind::LOCAL;
-                link_lookup.insert(sym);
+    out_elf.sync_all().unwrap();
+    linker::relayout(&mut out_elf, 0x300).unwrap();
+
+    // map all the relocs
+    let mut count_got = 0;
+    for mut unit in std::mem::replace(&mut lookup.units, Vec::new()) {
+        for mut reloc in unit.relocations {
+            let mut sym = &unit.symbols[reloc.sym as usize];
+            if sym.shndx == SymbolSectionIndex::Undefined {
+                sym = lookup.get_by_name(&sym.name).unwrap();
+                assert!(sym.name.len() > 0);
             }
-        }
-    }
+            let mut sym = sym.clone();
+            if let SymbolSectionIndex::Global(id) = sym.shndx {
+                sym.shndx  = SymbolSectionIndex::Section(global2section[&id] as u16);
+                sym.value += out_elf.sections[global2section[&id]].header.addr;
 
-    for unit in &mut units {
-        for mut reloc in unit.relocations.drain(..) {
-
-            if reloc.rtype == RelocationType::R_X86_64_RELATIVE {
-                sc_rela.push(reloc);
-                continue;
-            }
-
-
-            let symbol = match unit.symbols.get(reloc.sym as usize) {
-                Some(v) => v,
-                None => panic!(format!("reloc with missing symbol {:?}", reloc)),
-            };
-
-            let symbol = match symbol.stype {
-                types::SymbolType::SECTION => {
-                    //FIXME this leads to LOCAL symbols beeing emited after GLOBAL
-                    symbol
-                },
-                types::SymbolType::FUNC |
-                    types::SymbolType::OBJECT |
-                    types::SymbolType::NOTYPE
-                    if symbol.name.len() > 0 => {
-                        match link_lookup.get_by_name(&symbol.name) {
-                            None => {
-                                if symbol.bind == types::SymbolBind::WEAK {
-                                    symbol
-                                } else {
-                                    panic!(format!("undefined reference to {:?}", symbol))
-                                }
-                            },
-                            Some(s) => s,
-                        }
-                    },
-                _ => {
-                    panic!(format!("reloc to unsupported symbol {:?}->{:?}", reloc, symbol));
-                },
-            };
-
-            if symbol.shndx == 0 && symbol.bind == types::SymbolBind::LOCAL {
-                panic!(format!("undefined reference to {:?}", symbol));
+                //TODO ld.so doesn't like WEAK symbols 
+                //if sym.bind == types::SymbolBind::GLOBAL {
+                    sym.bind   = types::SymbolBind::LOCAL;
+                //}
             }
 
+            reloc.addr += out_elf.sections[global2section[&unit.global_id]].header.addr;
+            reloc.sym = sc_dynsym.len() as u32;
+            sc_dynsym.push(sym);
             match reloc.rtype {
-                RelocationType::R_X86_64_NONE => {},
-                RelocationType::R_X86_64_RELATIVE => unreachable!(),
-                RelocationType::R_X86_64_64 => {
-                    let value = (
-                        symbol.value as i64 +
-                        reloc.addend as i64)
-                        as i64;
-
-                    println!("emitting RELA for {:?} value {:x}", reloc, value);
-                    sc_rela.push(Relocation {
-                        rtype:  RelocationType::R_X86_64_RELATIVE,
-                        sym:    0,
-                        addr:   reloc.addr,
-                        addend: value as i64,
-                    });
-                },
-                RelocationType::R_X86_64_PC32 => {
-                    if symbol.bind == types::SymbolBind::WEAK {
-                        println!("NOT emitting reloc to weak symbol {:?} -> {:?}", reloc, symbol);
-                        continue;
-                    }
-                    println!("emitting TEXTREL for {:?} -> {:?}", reloc, symbol);
-
-                    let sym = sc_dynsym.insert(symbol.clone());
-
-
-                    sc_rela.push(Relocation {
-                        rtype:  RelocationType::R_X86_64_PC32,
-                        sym:    sym as u32,
-                        addr:   reloc.addr,
-                        addend: reloc.addend,
-                    });
-                }
-                _ => panic!(format!("linking relocation {:?} not implemented",reloc)),
-            };
+                RelocationType::R_X86_64_GOTPCREL |
+                    RelocationType::R_X86_64_GOTPCRELX |
+                    RelocationType::R_X86_64_REX_GOTPCRELX => {
+                        count_got += 1;
+                    },
+                    _ => {},
+            }
+            sc_rela.push(reloc);
         }
     }
 
+    let sh_index_got = out_elf.sections.len();
+    out_elf.sections.push(Section::new(String::from(".got"), types::SectionType::NOBITS,
+                                       types::SectionFlags::ALLOC | types::SectionFlags::WRITE,
+                                       SectionContent::None,
+                                       0,0));
+    out_elf.sections[sh_index_got].header.size = count_got * 8;
 
+    out_elf.sync_all().unwrap();
+    linker::relayout(&mut out_elf, 0x300).unwrap();
+
+    let dynsym_index_got = sc_dynsym.len();
+    sc_dynsym.push(Symbol{
+        shndx:  SymbolSectionIndex::Section(sh_index_got as u16),
+        value:  out_elf.sections[sh_index_got].header.addr,
+        size:   0,
+        name:   String::from(".got"),
+        stype:  types::SymbolType::NOTYPE,
+        bind:   types::SymbolBind::LOCAL,
+        vis:    types::SymbolVis::DEFAULT,
+    });
+
+    //resolve some relocations that ld can't do
+
+    let mut got_used : u64 = 0;
+    let relocs = std::mem::replace(&mut sc_rela, Vec::new());
+    for mut reloc in relocs {
+        match reloc.rtype {
+            //FIXME R_X86_64_REX_GOTPCRELX doesnt work?
+            //also the addend thing is weird. why carry over the -4?
+
+            RelocationType::R_X86_64_GOTPCREL |
+                RelocationType::R_X86_64_GOTPCRELX |
+                RelocationType::R_X86_64_REX_GOTPCRELX => {
+
+                    let got_slot = got_used;
+                    got_used += 8;
+
+                    sc_rela.push(Relocation{
+                        addr:   reloc.addr,
+                        sym:    dynsym_index_got as u32,
+                        rtype:  RelocationType::R_X86_64_PC32,
+                        addend: got_slot as i64 + reloc.addend,
+                    });
+
+                    //this is is only really used for debugging, hence symtab only
+                    sc_symtab.push(Symbol{
+                        shndx:  SymbolSectionIndex::Section(sh_index_got as u16),
+                        value:  sc_dynsym[dynsym_index_got].value + got_slot,
+                        size:   8,
+                        name:   sc_dynsym[reloc.sym as usize].name.clone() + "@GOT",
+                        stype:  types::SymbolType::OBJECT,
+                        bind:   types::SymbolBind::LOCAL,
+                        vis:    types::SymbolVis::DEFAULT,
+                    });
+
+                    if sc_dynsym[reloc.sym as usize].shndx == SymbolSectionIndex::Undefined {
+                        assert!(sc_dynsym[reloc.sym as usize].bind == types::SymbolBind::WEAK);
+                        println!("GOT slot at 0x{:x} remains 0 for undefined weak symbol {}",
+                                 sc_dynsym[dynsym_index_got].value + got_slot,
+                                 sc_dynsym[reloc.sym as usize].name
+                                 );
+                    } else {
+                        sc_rela.push(Relocation{
+                            addr:   sc_dynsym[dynsym_index_got].value + got_slot,
+                            sym:    reloc.sym,
+                            rtype:  RelocationType::R_X86_64_64,
+                            addend: 0,
+                        });
+                    }
+                },
+
+
+            RelocationType::R_X86_64_PLT32  => {
+                reloc.rtype  = RelocationType::R_X86_64_PC32;
+                //reloc.addend = 0;
+                sc_rela.push(reloc);
+            },
+            _ => {
+                sc_rela.push(reloc);
+            },
+        }
+    }
+
+    //reposition all the symbols for symtab
+    for sym in &mut lookup.symbols {
+        if let SymbolSectionIndex::Global(id) = sym.shndx {
+            sym.value += out_elf.sections[global2section[&id]].header.addr;
+            sym.shndx = SymbolSectionIndex::Section(global2section[&id] as u16);
+            sym.bind  = types::SymbolBind::LOCAL;
+        }
+    }
+    out_elf.header.entry = lookup.get_by_name("_start").unwrap().value;
+    sc_symtab.extend(lookup.symbols);
 
 
     //store on .dynamic may add strings to dynsym, which will change all the offsets.
@@ -353,215 +345,435 @@ fn main() {
     let sh_index_dynstr = out_elf.sections.len() + 3;
 
     let sh_index_dynsym = out_elf.sections.len();
-    let symhash = sc_dynsym.make_symhash(&out_elf.header, sh_index_dynsym as u32);
-    let sc_dynsym = sc_dynsym.into_vec();
+    let symhash = elfkit::symbol::symhash(&out_elf.header, &sc_dynsym, sh_index_dynsym as u32);
     let first_global_dynsym = sc_dynsym.iter().enumerate()
         .find(|&(_,s)|s.bind == types::SymbolBind::GLOBAL).map(|(i,_)|i).unwrap_or(0);;
-    out_elf.sections.push(Section::new(".dynsym", types::SectionType::DYNSYM,
-                                       types::SectionFlags::ALLOC,
-                                       SectionContent::Symbols(sc_dynsym),
-                                       sh_index_dynstr as u32, first_global_dynsym as u32));
+    out_elf.sections.push(Section::new(String::from(".dynsym"), types::SectionType::DYNSYM,
+    types::SectionFlags::ALLOC,
+    SectionContent::Symbols(sc_dynsym),
+    sh_index_dynstr as u32, first_global_dynsym as u32));
 
     out_elf.sections.push(symhash);
 
 
     sc_rela.sort_unstable_by(|a,b| if a.rtype == RelocationType::R_X86_64_RELATIVE { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater} );
 
-    out_elf.sections.push(Section::new(".rela.dyn", types::SectionType::RELA,
-                                       types::SectionFlags::ALLOC,
-                                       SectionContent::Relocations(sc_rela),
-                                       sh_index_dynsym as u32, 0));
+    out_elf.sections.push(Section::new(String::from(".rela.dyn"), types::SectionType::RELA,
+    types::SectionFlags::ALLOC,
+    SectionContent::Relocations(sc_rela),
+    sh_index_dynsym as u32, 0));
 
 
-    out_elf.sections.push(Section::new(".dynstr", types::SectionType::STRTAB,
-                                       types::SectionFlags::ALLOC,
-                                       SectionContent::Strtab(Strtab::default()), 0,0));
+    out_elf.sections.push(Section::new(String::from(".dynstr"), types::SectionType::STRTAB,
+    types::SectionFlags::ALLOC,
+    SectionContent::Strtab(Strtab::default()), 0,0));
 
 
     out_elf.sync_all().unwrap();
-    Linker::relayout(&mut out_elf, 0x300).unwrap();
+    linker::relayout(&mut out_elf, 0x300).unwrap();
 
-    sc_dynamic.extend(Linker::dynamic(&out_elf).unwrap());
-    out_elf.sections.push(Section::new(".dynamic", types::SectionType::DYNAMIC,
-                                                           types::SectionFlags::ALLOC | types::SectionFlags::WRITE,
-                                                           SectionContent::Dynamic(sc_dynamic), sh_index_dynstr as u32,0));
-
+    sc_dynamic.extend(linker::dynamic(&out_elf).unwrap());
+    out_elf.sections.push(Section::new(String::from(".dynamic"), types::SectionType::DYNAMIC,
+    types::SectionFlags::ALLOC | types::SectionFlags::WRITE,
+    SectionContent::Dynamic(sc_dynamic), sh_index_dynstr as u32,0));
 
     let sh_index_strtab = out_elf.sections.len();
-    out_elf.sections.push(Section::new(".strtab", types::SectionType::STRTAB,
-                                       types::SectionFlags::empty(),
-                                       SectionContent::Strtab(Strtab::default()), 0,0));
+    out_elf.sections.push(Section::new(String::from(".strtab"), types::SectionType::STRTAB,
+    types::SectionFlags::empty(),
+    SectionContent::Strtab(Strtab::default()), 0,0));
 
     //sc_symtab.sort_unstable_by(|a,b| a.bind.cmp(&b.bind));
     let first_global_symtab = sc_symtab.iter().enumerate()
         .find(|&(_,s)|s.bind == types::SymbolBind::GLOBAL).map(|(i,_)|i).unwrap_or(0);;
-    out_elf.sections.push(Section::new(".symtab", types::SectionType::SYMTAB,
-                                       types::SectionFlags::empty(),
-                                       SectionContent::Symbols(sc_symtab),
-                                       sh_index_strtab as u32, first_global_symtab as u32));
+    out_elf.sections.push(Section::new(String::from(".symtab"), types::SectionType::SYMTAB,
+    types::SectionFlags::empty(),
+    SectionContent::Symbols(sc_symtab),
+    sh_index_strtab as u32, first_global_symtab as u32));
 
-    out_elf.sections.push(Section::new(".shstrtab", types::SectionType::STRTAB,
-                                       types::SectionFlags::from_bits_truncate(0),
-                                       SectionContent::Strtab(Strtab::default()),
-                                       0,0));
+    out_elf.sections.push(Section::new(String::from(".shstrtab"), types::SectionType::STRTAB,
+    types::SectionFlags::from_bits_truncate(0),
+    SectionContent::Strtab(Strtab::default()),
+    0,0));
 
     out_elf.sync_all().unwrap();
-    Linker::relayout(&mut out_elf, 0x300).unwrap();
-
-    //find the start sym
-    for sec in &out_elf.sections {
-        match &sec.content {
-            &SectionContent::Symbols(ref v) => {
-                for sym in v {
-                    if sym.name == "_start" {
-                        out_elf.header.entry = /*out_elf.sections[sym.shndx as usize].header.addr + */sym.value;
-                    }
-                }
-            },
-            _ => {},
-        }
-    }
-
-    if out_elf.header.entry == 0 {
-        println!("warning: _start not found, entry address is set to 0x0");
-    }
-
-    out_elf.segments = Linker::segments(&out_elf).unwrap();
-
-
+    linker::relayout(&mut out_elf, 0x300).unwrap();
+    out_elf.segments = linker::segments(&out_elf).unwrap();
     out_elf.store_all().unwrap();
     out_elf.to_writer(&mut out_file).unwrap();
 }
 
-fn sysv_hash(s: &String) -> u64 {
 
-    let mut h : u64 = 0;
-    let mut g : u64 = 0;
 
-    for byte in s.bytes() {
-        h = (h << 4) + byte as u64;
-        g = h & 0xf0000000;
-        if g >  0 {
-            h ^= g >> 24;
+
+fn elfs_from_cli() -> Vec<(String,Elf)> {
+    let mut elfs = Vec::new();
+    for in_path in env::args().skip(1) {
+        let mut in_file  = OpenOptions::new().read(true).open(&in_path).unwrap();
+        let in_name = Path::new(&in_path).file_name().unwrap().to_string_lossy().into_owned();
+        match filetype::filetype(&in_file).unwrap() {
+            filetype::FileType::Elf => {
+                elfs.push((in_name, Elf::from_reader(&mut in_file).unwrap()));
+            },
+            filetype::FileType::Archive => {
+                let mut buffer = Vec::new();
+                in_file.read_to_end(&mut buffer).unwrap();
+                match goblin::Object::parse(&buffer).unwrap() {
+                    goblin::Object::Archive(archive) => {
+                        for (name,member,_) in archive.summarize() {
+                            let mut io = Cursor::new(&buffer[
+                                                     member.offset as usize ..
+                                                     member.offset as usize + member.header.size]);
+                            elfs.push((String::from(name), Elf::from_reader(&mut io).unwrap()));
+                        }
+                    },
+                    _ => unreachable!(),
+                }
+            },
+            _ => {
+                fail(format!("{}: unknown file type", in_name));
+            }
         }
-        h &= !g;
     }
-    return h;
+    elfs
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LinkBehaviour {
+    Static,
+    Dynamic
+}
+impl Default for LinkBehaviour {
+    fn default() -> LinkBehaviour {
+        LinkBehaviour::Static
+    }
+}
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum UnitSegment {
+    Executable,
+    Data,
+    Bss,
+}
+impl Default for UnitSegment{
+    fn default() -> UnitSegment {
+        UnitSegment::Executable
+    }
+}
 
 #[derive(Default)]
-struct Symtab {
-    pub ordered:    Vec<Symbol>,
-    pub by_name:    HashMap<String, usize>,
-    pub by_section: HashMap<u16, usize>,
+struct Unit {
+    pub global_id:   u64,
+    pub name:        String,
+    pub behaviour:   LinkBehaviour,
+    pub segment:     UnitSegment,
+    pub code:        Vec<u8>,
+    pub symbols:     Vec<Symbol>,
+    pub relocations: Vec<Relocation>,
+    pub siblings:    Vec<u64>,
+
+    s_lookup: HashMap<String, usize>,
 }
 
-impl Symtab {
-    fn from_vec(mut v: Vec<Symbol>) -> Symtab {
-        let mut r = Symtab::default();
-        for sym in v.drain(..) {
-            r.insert(sym);
+
+impl Unit {
+    pub fn fake(name: String, behaviour: LinkBehaviour, symbols: Vec<Symbol>) -> Unit {
+
+        let mut s_lookup = HashMap::new();
+        for (i, sym) in symbols.iter().enumerate() {
+            s_lookup.insert(sym.name.clone(), i);
         }
-        r
+
+        Unit {
+            global_id:  0,
+            name:       name,
+            behaviour:  behaviour,
+            segment:    UnitSegment::Bss,
+            code:       vec![0;8],
+            symbols:    symbols,
+            relocations:Vec::new(),
+            s_lookup:   s_lookup,
+            siblings:   Vec::new(),
+        }
     }
 
-    fn into_vec(self) -> Vec<Symbol> {
-        self.ordered
+
+    pub fn lookup(&self, name: &str) -> Option<&Symbol> {
+        match self.s_lookup.get(name) {
+            None => None,
+            Some(i) => self.symbols.get(*i),
+        }
     }
 
+    pub fn from_elf(name: String, mut elf: Elf, global_id_counter: &mut u64) -> Vec<Unit>{
+        let behaviour = match elf.header.etype {
+            types::ElfType::DYN => LinkBehaviour::Dynamic,
+            _ => LinkBehaviour::Static,
+        };
 
-    fn make_symhash(&self, eh: &Header, link: u32) -> Section {
-        //TODO i'm too lazy to do this correctly now, so we'll just emit a hashtable with nbuckets  == 1
-        let mut b = Vec::new();
-        {
-            let mut io = &mut b;
-            elf_write_uclass!(eh, io, 1); //nbuckets
-            elf_write_uclass!(eh, io, self.ordered.len() as u64); //nchains
+        let mut sec2global  = HashMap::new();
+        let mut units       = HashMap::new();
+        let mut symbols     = (0, Vec::new());
+        let mut relas       = Vec::new();
 
-            elf_write_uclass!(eh, io, 1); //the bucket. pointing at symbol 1
+        for i in elf.sections.iter().enumerate().filter_map(|(i, ref sec)| {
+            match sec.header.shtype {
+                types::SectionType::SYMTAB |
+                    types::SectionType::DYNSYM |
+                    types::SectionType::RELA   |
+                    types::SectionType::NOBITS |
+                    types::SectionType::PROGBITS => Some (i),
+                _ => None,
+            }
+        }).collect::<Vec<usize>>().iter() {
+            elf.load_at(*i).unwrap();
+            let mut sec = std::mem::replace(&mut elf.sections[*i], Section::default());
 
-            elf_write_uclass!(eh, io, 0); //symbol 0
+            match sec.header.shtype {
+                types::SectionType::PROGBITS |
+                    types::SectionType::NOBITS
+                    if sec.header.flags.contains(types::SectionFlags::ALLOC)  => {
+                        *global_id_counter += 1;
+                        sec2global.insert(*i, *global_id_counter);
 
-            //the chains. every symbol just points at the next, because nbuckets == 1
-            for i in 1..self.ordered.len() - 1 {
-                elf_write_uclass!(eh, io, i as u64 + 1);
+                        units.insert(*i, Unit{
+                            global_id:  *global_id_counter,
+                            name:       sec.name.clone() + "." + &name.clone(),
+                            behaviour:  behaviour.clone(),
+                            segment:    if sec.header.shtype == types::SectionType::NOBITS {
+                                UnitSegment::Bss
+                            } else if sec.header.flags.contains(types::SectionFlags::EXECINSTR) {
+                                UnitSegment::Executable
+                            } else {
+                                UnitSegment::Data
+                            },
+                            code: if sec.header.shtype == types::SectionType::NOBITS {
+                                vec![0;sec.header.size as usize]
+                            } else {
+                                sec.content.into_raw().unwrap()
+                            },
+                            symbols:        Vec::new(),
+                            relocations:    Vec::new(),
+                            s_lookup:       HashMap::new(),
+                            siblings:       Vec::new(),
+                        });
+                    },
+                    types::SectionType::SYMTAB if behaviour == LinkBehaviour::Static => {
+                        symbols = (*i, sec.content.into_symbols().unwrap());
+                    },
+                    types::SectionType::DYNSYM if behaviour == LinkBehaviour::Dynamic => {
+                        symbols = (*i, sec.content.into_symbols().unwrap());
+                    },
+                    types::SectionType::RELA => {
+                        relas.push((sec.header, sec.content.into_relocations().unwrap()));
+                    },
+                    _ => {},
+            }
+        }
+
+        for (obj_shndx, ref mut obj) in units.iter_mut() {
+            let mut smap = HashMap::new();
+
+            // copy all symbols from symtab where .shndx is this obj
+            for (i, sym) in symbols.1.iter().enumerate() {
+                if sym.shndx == SymbolSectionIndex::Section(*obj_shndx as u16) {
+                    let mut sym = sym.clone();
+                    sym.shndx = SymbolSectionIndex::Global(obj.global_id);
+                    smap.insert(i, obj.symbols.len());
+                    obj.s_lookup.insert(sym.name.clone(), obj.symbols.len());
+                    obj.symbols.push(sym);
+                }
             }
 
-            //except the last one
-            elf_write_uclass!(eh, io, 0);
+            // for all refs where .info is this obj
+            for &(ref header, ref relas) in &relas {
+                if header.info == *obj_shndx  as u32 {
+                    if header.link != symbols.0 as u32{
+                        fail(format!("{}: reloc section {} references unexpected or duplicated symbols section",
+                                     name, header.name));
+                    }
+                    // also copy the rest of the symbols needed for reloc
+                    for rela in relas {
+                        if smap.get(&(rela.sym as usize)) == None {
+                            let mut sym = symbols.1[rela.sym as usize].clone();
+
+                            // if it's a global or weak, undef it,
+                            // so it's actually looked up in other units
+
+                            if sym.bind != types::SymbolBind::LOCAL {
+                                sym.shndx = SymbolSectionIndex::Undefined;
+                            } else if let SymbolSectionIndex::Section(sx) = sym.shndx {
+                                sym.shndx = match sec2global.get(&(sx as usize)) {
+                                    None => fail(format!("{} rela {:?} -> {:?} to section {} which is not allocated",
+                                                         obj.name, rela, sym, sx)),
+                                    Some(id) => SymbolSectionIndex::Global(*id),
+                                };
+                            };
+                            smap.insert(rela.sym as usize, obj.symbols.len());
+                            obj.s_lookup.insert(sym.name.clone(), obj.symbols.len());
+                            obj.symbols.push(sym);
+                        }
+                        let mut rela = rela.clone();
+                        rela.sym = *smap.get(&(rela.sym as usize)).unwrap() as u32;
+                        obj.relocations.push(rela);
+                    }
+                }
+            }
+
         }
 
-        Section {
-            name: String::from(".hash"),
-            header: SectionHeader {
-                name: 0,
-                shtype: types::SectionType::HASH,
-                flags:  types::SectionFlags::ALLOC,
-                addr:   0,
-                offset: 0,
-                size:   b.len() as u64,
-                link:   link,
-                info:       0,
-                addralign:  0,
-                entsize:    8, // or 4 for CLass32
-            },
-            content: SectionContent::Raw(b),
+        let mut units = units.into_iter().map(|(k,v)|v).collect::<Vec<Unit>>();
+
+
+        //we can emit COMMON symbols as WEAK in a bss
+        //because we're smart enough to only layout the bss that's actually used.
+        for sym in symbols.1.iter() {
+            if sym.shndx == SymbolSectionIndex::Common {
+                *global_id_counter += 1;
+
+                let symname = sym.name.clone();
+                let symsize = sym.size;
+                let mut sym = sym.clone();
+                sym.value = 0;
+                sym.shndx = SymbolSectionIndex::Global(*global_id_counter);
+                sym.bind  = types::SymbolBind::WEAK;
+                let mut symbols = vec![sym];
+                let mut s_lookup = HashMap::new();
+                s_lookup.insert(symname.clone(), 0);
+
+                assert!(behaviour == LinkBehaviour::Static, "cannot use common symbol with dynamic linking");
+                units.push(Unit{
+                    global_id:      *global_id_counter,
+                    name:           String::from(".common.") + &symname,
+                    behaviour:      behaviour.clone(),
+                    segment:        UnitSegment::Bss,
+                    code:           vec![0;symsize as usize],
+                    symbols:        symbols,
+                    relocations:    Vec::new(),
+                    s_lookup:       s_lookup,
+                    siblings:       Vec::new(),
+                });
+            }
         }
+
+        //TODO we need to extract things like .init_array* , .preinit_array.* , ...
+        //they have dependencies the opposite way. i.e a reloc on .init_array.bla will point into .bla,
+        //because the function in .init_array.bla does stuff to memory in .bla
+
+
+
+        // this is nessesary because compilers assume that they can emit sections into objects which
+        // will be made available for linking when some other section of that object gets linked in
+        // TODO this seems  only relevant when that other section actually has symbols? hopefully
+        let siblings: Vec<u64> = units.iter().filter_map(|unit|{
+            for sym in &unit.symbols {
+                if sym.shndx != SymbolSectionIndex::Undefined && sym.bind != types::SymbolBind::LOCAL {
+                    return Some(unit.global_id);
+                }
+            }
+            None
+        }).collect();
+
+        for unit in &mut units {
+            unit.siblings = siblings.clone();
+        }
+
+        units
     }
+}
 
-    fn get_by_name(&self, name: &String) -> Option<&Symbol> {
+#[derive(Default)]
+struct Lookup {
+    pub units:          Vec<Unit>,
+    pub by_id:          HashMap<u64, usize>,
+
+    pub symbols:        Vec<Symbol>,
+    pub by_name:        HashMap<String, usize>,
+
+    pub symbols2units:  HashMap<usize, usize>,
+}
+
+impl Lookup {
+    fn get_by_name(&self, name: &str) -> Option<&Symbol> {
         match self.by_name.get(name) {
-            Some(v) => self.ordered.get(*v),
+            Some(v) => self.symbols.get(*v),
             None => None,
         }
     }
 
-    fn insert(&mut self, mut sym: Symbol) -> usize {
+    pub fn insert_unit(&mut self, unit: Unit) {
+        let ui = self.units.len();
+
+        for sym in &unit.symbols {
+            self.insert_symbol(sym.clone(), ui, &unit.name);
+        }
+
+        self.by_id.insert(unit.global_id.clone(), self.units.len());
+        self.units.push(unit);
+    }
+
+
+    fn symbol_lookup_priority(s1: &Symbol, s2: &Symbol) -> usize {
+
+        if s1.shndx == SymbolSectionIndex::Undefined {
+            // we don't check if s2 is undefined here, because it won't matter.
+            // if both are undefined, we can just pick a random one.
+            return 2;
+        }
+        if s2.shndx == SymbolSectionIndex::Undefined {
+            // we skip the rest of the checks here too.
+            // any defition beats undefined
+            return 1;
+        }
+
+        if s1.bind == types::SymbolBind::GLOBAL {
+            if s2.bind == types::SymbolBind::GLOBAL {
+                // can't have two defined global
+                return 0;
+            } else {
+                return 1;
+            }
+        }
+
+        // 1 wasn't global, so it can only be WEAK
+        // 2 is either GLOBAL or WEAK, so it either beats 1 or it doesnt matter
+        return 2;
+    }
+
+
+    fn insert_symbol(&mut self, sym: Symbol, unit_index: usize, obj_name: &str) -> usize {
         match sym.stype {
-            types::SymbolType::SECTION => {
-                match self.by_section.entry(sym.shndx) {
-                    Entry::Vacant(o) => {
-                        let i = self.ordered.len();
-                        o.insert(i);
-                        self.ordered.push(sym);
-                        i
-                    },
-                    Entry::Occupied(o) => {
-                        let sym2 = &mut self.ordered[*o.get()];
-                        std::mem::replace(sym2, sym);
-                        *o.get()
-                    }
+            types::SymbolType::NOTYPE | types::SymbolType::OBJECT | types::SymbolType::FUNC => {
+                if sym.bind == types::SymbolBind::LOCAL {
+                    return 0;
                 }
-            },
-            types::SymbolType::FILE | types::SymbolType::NOTYPE | types::SymbolType::OBJECT | types::SymbolType::FUNC => {
                 match self.by_name.entry(sym.name.clone()) {
                     Entry::Vacant(o) => {
-                        let i = self.ordered.len();
+                        let i = self.symbols.len();
                         o.insert(i);
-                        self.ordered.push(sym);
+                        self.symbols.push(sym);
+                        self.symbols2units.insert(i, unit_index);
                         i
                     },
                     Entry::Occupied(o) => {
-                        let sym2 = &mut self.ordered[*o.get()];
-                        if sym.bind == types::SymbolBind::GLOBAL {
-                            if sym2.bind == types::SymbolBind::GLOBAL && sym2.shndx != 0{
-                                panic!(println!("re-export of globally defined symbol {:?} <> {:?}",
-                                                sym, sym2));
+                        let sym2 = &mut self.symbols[*o.get()];
 
+                        match Lookup::symbol_lookup_priority(&sym, sym2) {
+                            1 =>  {
+                                std::mem::replace(sym2, sym);
+                                self.symbols2units.insert(*o.get(), unit_index);
+                            },
+                            2 => {},
+                            _ => {
+                                fail(format!(
+                                        "{}: re-export of symbol {:?} \n   already defined in {} as {:?}",
+                                        obj_name, sym, self.units[self.symbols2units[o.get()]].name, sym2));
                             }
-                            std::mem::replace(sym2, sym);
                         }
                         *o.get()
                     }
                 }
             },
-            _ => {
-                panic!(format!("unsupported symbol type for Symtab: {:?}", sym));
-            }
-
+            _ => {0},
         }
     }
 }
-

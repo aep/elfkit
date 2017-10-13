@@ -50,7 +50,7 @@ so if program loads at 0xwhatever, it'll still be 0x1 for the first instruction 
 I still have no idea how that even works, because how does the cpu know where the thing was loaded?
 anyway..
 
-Together with X86_64_GOTPCREL the compiler emits a LEA instruction with an offset from RIP, so for example:
+Together with for exmaple X86_64_GOTPCREL the compiler emits a LEA instruction with an offset from RIP, so for example:
 
 ```
     0x0: "hello"
@@ -63,7 +63,7 @@ that's different from mov, which would store the value at that position in rsi
 
 in this case X86_64_GOTPCREL has
  - offset=0x9 (the address offset part of lea)
- - addend=-0x4 (i am currently assuming this is the start of the instruction from offset)
+ - addend=-0x4 (i am currently assuming this corrects for %rip being the NEXT instruction)
  - symbol=something pointing at 0x0 hello
 
 if the linker knows the address of hello, it can simply write that at reloc.offset.
@@ -92,11 +92,14 @@ when loading, the dynloader then puts the address of hello in there
 ```
 
 the mov instruction will load (unlike lea) the value from 0x0, apply the rip offset to get an absolute address,
-and store it in rsi
+and store it in rsi. There doesn't seem to be any immediate benefit from doing this, and in most cases there isn't.
+To the best of my current knowledge, a GOT is only nessesary if the thing we want to address is located so far away that
+a 32bit signed int can't express the distance.
 
-if this sounds rather complicated, it's because it really is. i still haven't figured out why this is done.
-until i understand that, elfkit just emits X86_64_PC32, which will instruct the dynlinker to write the address
-of hello directly into the lea.
+This happens rather often when we load another library at runtime.
+Thanks to the Memory Mapping Unit of the CPU, using the entire 64bit for addressing doesn't relly come with any cost,
+so ld.so regularily places libraries far apart from each other. This is why we need a GOT to have ld.so tell us the absolute address
+of a symbol in another library at runtime in 64bit space.
 
 
 useful debugging help

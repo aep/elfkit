@@ -27,6 +27,9 @@ pub enum Error {
     MissingSymtabSection,
     LinkedSectionIsNotSymtab,
     UnexpectedSectionContent,
+    InvalidSymbolShndx(String, u16),
+    DynsymInStaticLibrary,
+    SymbolSectionIndexExtendedCannotBeWritten,
 }
 
 impl From<::std::io::Error> for Error {

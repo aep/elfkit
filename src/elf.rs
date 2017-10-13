@@ -9,14 +9,16 @@ use strtab::*;
 use segment::*;
 
 use std::io::{Read, Write, Seek, SeekFrom};
-use num_traits::{FromPrimitive, ToPrimitive};
 use std::io::BufWriter;
 use std;
+use std::collections::HashSet;
 
 pub struct Elf {
     pub header:   Header,
     pub segments: Vec<SegmentHeader>,
     pub sections: Vec<Section>,
+
+    s_lookup: Option<HashSet<String>>,
 }
 
 impl Default for Elf {
@@ -25,6 +27,7 @@ impl Default for Elf {
             header:   Header::default(),
             segments: Vec::default(),
             sections: Vec::default(),
+            s_lookup: None,
         };
         //always prepend a null section. i don't know yet why, but this is what everyone does.
         //TODO this is part of the linker?
@@ -34,7 +37,6 @@ impl Default for Elf {
 }
 
 impl Elf {
-
 
     pub fn from_reader<R>(io: &mut R) -> Result<Elf, Error> where R: Read + Seek {
         let mut r = Elf::default();
@@ -119,7 +121,7 @@ impl Elf {
         }
 
 
-    fn load_at(&mut self, i: usize) -> Result<(), Error>{
+    pub fn load_at(&mut self, i: usize) -> Result<(), Error>{
         let is_loaded = match self.sections[i].content {
             SectionContent::Raw(_) | SectionContent::None => false,
             _ => true,
@@ -136,7 +138,7 @@ impl Elf {
                 if sec.header.link < 1 || sec.header.link as usize >= self.sections.len() {
                     None
                 } else {
-                    self.load_at(sec.header.link as usize);
+                    self.load_at(sec.header.link as usize)?;
                     Some(&self.sections[sec.header.link as usize].content)
                 }
             };
@@ -157,7 +159,7 @@ impl Elf {
 
     pub fn load_all(&mut self) -> Result<(), Error> {
         for i in 0..self.sections.len() {
-            self.load_at(i);
+            self.load_at(i)?;
         }
         Ok(())
     }
@@ -237,7 +239,7 @@ impl Elf {
                 if sec.header.link < 1 || sec.header.link as usize >= self.sections.len() {
                     None
                 } else {
-                    self.load_at(sec.header.link as usize);
+                    self.load_at(sec.header.link as usize)?;
                     Some(&mut self.sections[sec.header.link as usize].content)
                 }
             };
@@ -299,7 +301,7 @@ impl Elf {
                             None
                         } else {
                             dirty.push(sec.header.link as usize);
-                            self.load_at(sec.header.link as usize);
+                            self.load_at(sec.header.link as usize)?;
                             Some(&mut self.sections[sec.header.link as usize].content)
                         }
                     };
@@ -459,3 +461,37 @@ sec.name, sec.header.offset, off);
 
 
 
+
+
+impl Elf {
+    /// check if a global defined symbol is exported from the elf file.
+    /// can be used to avoid load_all if a particular elf file doesn't
+    /// contain the symbol you need anyway.
+    /// It uses the cheapest possible method to determine the result
+    /// which is currently loading symtab into a hashmap
+    /// TODO should be replaced with checking HASH and GNU_HASH
+    pub fn contains_symbol(&mut self, name: &str) -> Result<bool, Error> {
+        if None == self.s_lookup {
+            let mut hm = HashSet::new();
+
+            for i in self.sections.iter().enumerate().filter_map(|(i, ref sec)|{
+                if sec.header.shtype == types::SectionType::SYMTAB ||
+                    sec.header.shtype == types::SectionType::DYNSYM {
+                        Some (i)
+                    } else {
+                        None
+                    }
+            }).collect::<Vec<usize>>().iter() {
+                self.load_at(*i)?;
+                for sym in self.sections[*i].content.as_symbols().unwrap() {
+                    if sym.bind != types::SymbolBind::LOCAL && sym.shndx != SymbolSectionIndex::Undefined {
+                        hm.insert(sym.name.clone());
+                    }
+                }
+            };
+
+            self.s_lookup = Some(hm);
+        }
+        Ok(self.s_lookup.as_ref().unwrap().contains(name))
+    }
+}

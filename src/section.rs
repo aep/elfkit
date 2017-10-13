@@ -106,15 +106,33 @@ impl SectionContent {
             _ => None,
         }
     }
+    pub fn into_symbols(self) -> Option<Vec<Symbol>> {
+        match self {
+            SectionContent::Symbols(v) => Some(v),
+            _ => None,
+        }
+    }
     pub fn as_relocations(&self) -> Option<&Vec<Relocation>> {
         match self {
             &SectionContent::Relocations(ref v) => Some(v),
             _ => None,
         }
     }
+    pub fn into_relocations(self) -> Option<Vec<Relocation>> {
+        match self {
+            SectionContent::Relocations(v) => Some(v),
+            _ => None,
+        }
+    }
     pub fn as_raw_mut(&mut self) -> Option<&mut Vec<u8>> {
         match self {
             &mut SectionContent::Raw(ref mut v) => Some(v),
+            _ => None,
+        }
+    }
+    pub fn into_raw(self) -> Option<Vec<u8>> {
+        match self {
+            SectionContent::Raw(v) => Some(v),
             _ => None,
         }
     }
@@ -140,10 +158,10 @@ pub struct Section {
 
 impl Section {
     pub fn size(&self, eh: &Header) -> usize { self.content.size(eh) }
-    pub fn new(name: &str, shtype: types::SectionType, flags: types::SectionFlags,
+    pub fn new(name: String, shtype: types::SectionType, flags: types::SectionFlags,
                content: SectionContent, link: u32, info: u32) -> Section {
         Section{
-            name: String::from(name),
+            name: name,
             header: SectionHeader {
                 name:       0,
                 shtype:     shtype,

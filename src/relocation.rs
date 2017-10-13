@@ -73,7 +73,7 @@ impl Default for RelocationType{
     fn default() -> Self {RelocationType::R_X86_64_NONE}
 }
 
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct Relocation {
     pub addr:   u64,
     pub sym:    u32,

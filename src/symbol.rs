@@ -2,10 +2,25 @@ use std::io::{Read, Write};
 use {Error, Header, types, SectionContent};
 use num_traits::{FromPrimitive,ToPrimitive};
 use strtab::Strtab;
+use section::{Section,SectionHeader};
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum SymbolSectionIndex {
+    Section(u16),  // 1-6551
+    Undefined,     // 0
+    Absolute,      // 65521,
+    Common,        // 6552,
+    Global(u64),
+}
+impl Default for SymbolSectionIndex {
+    fn default() -> SymbolSectionIndex {
+        SymbolSectionIndex::Undefined
+    }
+}
 
 #[derive(Debug, Default, Clone)]
 pub struct Symbol {
-    pub shndx:  u16,
+    pub shndx:  SymbolSectionIndex,
     pub value:  u64,
     pub size:   u64,
 
@@ -16,8 +31,6 @@ pub struct Symbol {
 }
 
 impl Symbol {
-
-
     fn from_val(
         tab: Option<&Strtab>,
         _name:   u32,
@@ -31,6 +44,14 @@ impl Symbol {
         let name  = match tab {
             Some(tab) => tab.get(_name as usize),
             None    => String::default(),
+        };
+
+        let shndx = match shndx {
+            0       => SymbolSectionIndex::Undefined,
+            65521   => SymbolSectionIndex::Absolute,
+            65522   => SymbolSectionIndex::Common,
+            _ if shndx > 0 && shndx < 6552 => SymbolSectionIndex::Section(shndx),
+            _       => return Err(Error::InvalidSymbolShndx(name.clone(), shndx)),
         };
 
         let reb = info & 0xf;
@@ -126,10 +147,18 @@ impl Symbol {
             let info  = (self.bind.to_u8().unwrap() << 4) + (self.stype.to_u8().unwrap() & 0xf);
             let other = self.vis.to_u8().unwrap();
 
+            let shndx = match self.shndx {
+                SymbolSectionIndex::Section(i)  => i,
+                SymbolSectionIndex::Undefined   => 0,
+                SymbolSectionIndex::Absolute    => 65521,
+                SymbolSectionIndex::Common      => 65522,
+                SymbolSectionIndex::Global(_)   => return Err(Error::SymbolSectionIndexExtendedCannotBeWritten),
+            };
+
             match eh.ident_class {
                 types::Class::Class64 => {
                     io.write(&[info, other])?;
-                    elf_write_u16!(eh, io, self.shndx)?;
+                    elf_write_u16!(eh, io, shndx)?;
                     elf_write_u64!(eh, io, self.value)?;
                     elf_write_u64!(eh, io, self.size)?;
                 },
@@ -137,7 +166,7 @@ impl Symbol {
                     elf_write_u32!(eh, io, self.value as u32)?;
                     elf_write_u32!(eh, io, self.size as u32)?;
                     io.write(&[info, other])?;
-                    elf_write_u16!(eh, io, self.shndx)?;
+                    elf_write_u16!(eh, io, shndx)?;
                 },
             };
             Ok(())
@@ -151,5 +180,60 @@ impl Symbol {
             _ => return Err(Error::LinkedSectionIsNotStrtab("syncing symbols")),
         }
         Ok(())
+    }
+}
+
+pub fn sysv_hash(s: &String) -> u64 {
+    let mut h : u64 = 0;
+    let mut g : u64 = 0;
+
+    for byte in s.bytes() {
+        h = (h << 4) + byte as u64;
+        g = h & 0xf0000000;
+        if g >  0 {
+            h ^= g >> 24;
+        }
+        h &= !g;
+    }
+    return h;
+}
+
+
+pub fn symhash(eh: &Header, symbols: &Vec<Symbol>, link: u32) -> Section {
+    //TODO i'm too lazy to do this correctly now, so we'll just emit a hashtable with nbuckets  == 1
+    let mut b = Vec::new();
+    {
+        let mut io = &mut b;
+        elf_write_uclass!(eh, io, 1); //nbuckets
+        elf_write_uclass!(eh, io, symbols.len() as u64); //nchains
+
+        elf_write_uclass!(eh, io, 1); //the bucket. pointing at symbol 1
+
+        elf_write_uclass!(eh, io, 0); //symbol 0
+
+        //the chains. every symbol just points at the next, because nbuckets == 1
+        for i in 1..symbols.len() - 1 {
+            elf_write_uclass!(eh, io, i as u64 + 1);
+        }
+
+        //except the last one
+        elf_write_uclass!(eh, io, 0);
+    }
+
+    Section {
+        name: String::from(".hash"),
+        header: SectionHeader {
+            name: 0,
+            shtype: types::SectionType::HASH,
+            flags:  types::SectionFlags::ALLOC,
+            addr:   0,
+            offset: 0,
+            size:   b.len() as u64,
+            link:   link,
+            info:       0,
+            addralign:  0,
+            entsize:    8, // or 4 for CLass32
+        },
+        content: SectionContent::Raw(b),
     }
 }

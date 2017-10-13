@@ -5,6 +5,7 @@ use std::env;
 use std::fs::File;
 use elfkit::{Elf, SectionContent, DynamicContent, types};
 use elfkit::relocation::RelocationType;
+use elfkit::symbol::SymbolSectionIndex;
 use std::io::{Read, Seek, SeekFrom};
 use colored::*;
 
@@ -215,9 +216,10 @@ fn main() {
                              format!("{:?}", symbol.bind),
                              format!("{:?}", symbol.vis),
                              match symbol.shndx {
-                                 0     => String::from("UND"),
-                                 65521 => String::from("ABS"),
-                                 v => format!("{}", v),
+                                 SymbolSectionIndex::Undefined  => String::from("UND"),
+                                 SymbolSectionIndex::Absolute   => String::from("ABS"),
+                                 SymbolSectionIndex::Common     => String::from("COM"),
+                                 SymbolSectionIndex::Section(i) => format!("{}", i),
                              },
                              symbol.name);
                 }

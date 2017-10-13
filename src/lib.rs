@@ -14,9 +14,10 @@ pub mod header;
 pub mod section;
 pub mod segment;
 pub mod elf;
+pub mod filetype;
 
 pub use relocation::Relocation;
-pub use symbol::Symbol;
+pub use symbol::{Symbol,SymbolSectionIndex};
 pub use strtab::Strtab;
 pub use dynamic::{Dynamic, DynamicContent};
 pub use error::Error;
