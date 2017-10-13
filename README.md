@@ -6,75 +6,25 @@
 Elfkit
 =========
 
-an elf read and manipulation library in pure rust (no bfd, no gnu code),
-intended to be used in binary manipulation utils such as strip, objcopy, linkers.
-The end goal is to build a drop-in replacement for gnu ld.
+an elf read and manipulation library in pure rust (written from scratch, no bfd, no gnu code, no license infections),
+intended to be used in binary manipulation utils such as strip, chrpath, objcopy and ld.
+The end goal is to build a well designed library that facilitates drop-in replacements for gnu ld.
 
-Some gnu binutils replacements are included as example code.
+currently elfkit's ld can only link asm and C code with clang and musl libc
 
-__warning: the high level api is a moving target. do not start using load/store yet__
+```
+cargo build --release --example ld
+ln -s $PWD/target/release/examples/ld /usr/bin/ld.elfkit
+musl-clang -fuse-ld=elfkit tests/samples/main_c.c
+```
+
+there's also a prettier version of readelf showing of parsing capabilities
 
 ```
 cargo run --example readelf ./tests/samples/amd64_exe
 ```
 
 ![screenshot](/examples/readelf-screenshot.png?raw=true)
-
-strip can be implemented like:
-
-```rust
-extern crate elfkit;
-
-use std::env;
-use std::fs::OpenOptions;
-use elfkit::{Elf,types};
-
-fn main() {
-    let in_filename  = env::args().nth(1).unwrap();
-    let out_filename = env::args().nth(2).unwrap();
-    let mut in_file  = OpenOptions::new().read(true).open(in_filename).unwrap();
-    let mut out_file = OpenOptions::new().write(true).truncate(true).create(true).open(out_filename).unwrap();
-
-    let mut in_elf  = Elf::from_reader(&mut in_file).unwrap();
-
-    let mut out_elf = Elf::default();
-
-    out_elf.header.ident_class  = in_elf.header.ident_class;
-    out_elf.header.ident_abi    = in_elf.header.ident_abi;
-    out_elf.header.etype        = in_elf.header.etype;
-    out_elf.header.machine      = in_elf.header.machine;
-    out_elf.header.entry        = in_elf.header.entry;
-
-    out_elf.segments = in_elf.segments.clone();
-
-    // sections which do not have an ALLOC flag aren't needed by the dynamic linker
-    // but also keep the first NULL section for padding
-    out_elf.sections = in_elf.sections.drain(..).filter(|sec|{
-        sec.header.flags.contains(types::SectionFlags::ALLOC) ||
-        sec.header.shtype == types::SectionType::NULL
-    }).collect();
-
-    out_elf.to_writer(&mut out_file).unwrap();
-}
-
-```
-
-api design
----------------------
-
-*lower level*
-
-everything is based on std::io::{Read,Write}. This is most convenient for userspace editors.
-For writing a kernel check alternatives below.
-
-Every type implements from_reader and to_writer. You can use them individually,
-but you'll always need a Header to tell the de/serializers about things like endianness, bitwidth,..
-
-*structured elf*
-
-the most versatile api is propably Elf::from_reader/to_writer.
-You can use it as is, which will hold all sectionc content in Vec<u8> or call Elf::load_all() which will parse
-the sections into their detailed specific structures, such as symbols, relocations, dynamic linker instructions, etc..
 
 
 implementation status
@@ -84,22 +34,23 @@ section specific parsers
 
 | type         | read    | write   |
 |--------------|---------|---------|
-| symtab       | ok      | ok      |
-| rela         | ok      | ok      |
+| symbols      | ok      | ok      |
+| strtab       | ok      | ok      |
+| relocations  | ok      | ok      |
 | dynamic      | ok      | ok      |
-| rel          | -       | -       |
 | note         | -       | -       |
 | gnu_hash     | -       | -       |
+| hash         | -       | faked   |
 | versym       | -       | -       |
 | verneed      | -       | -       |
 
 architectures
 
-| abi          | headers | relocations | 
-|--------------|---------|-------------|
-| x86_64       | ok      | wip         |
-| mips32r2 o32 | ok      |             |
-| arm eabi     | ok      |             |
+| abi          | headers | relocations    |
+|--------------|---------|----------------|
+| x86_64       | ok      | minimum viable |
+| mips32r2 o32 | ok      |                |
+| arm eabi     | ok      |                |
 
 
 alternatives

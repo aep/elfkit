@@ -1,9 +1,8 @@
 #!/bin/sh
 
 link_and_assert_fox() {
-    cargo run --example ld "$@"
-    chmod +x /tmp/e
-    output=$(/tmp/e)
+    cargo run --example ld -- -dynamic-linker /lib64/ld-linux-x86-64.so.2 "$@"
+    output=$(./a.out)
     if [ "$output" != "The quick brown fox jumps over the lazy dog" ]
     then
         echo "FAIL $@"

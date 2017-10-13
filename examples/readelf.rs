@@ -220,6 +220,7 @@ fn main() {
                                  SymbolSectionIndex::Absolute   => String::from("ABS"),
                                  SymbolSectionIndex::Common     => String::from("COM"),
                                  SymbolSectionIndex::Section(i) => format!("{}", i),
+                                 SymbolSectionIndex::Global(i)  => format!("g{}", i),
                              },
                              symbol.name);
                 }

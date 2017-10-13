@@ -18,6 +18,7 @@ use elfkit::relocation::RelocationType;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::hash_map::Entry;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use colored::*;
 
@@ -26,32 +27,87 @@ pub fn fail(msg: String) -> ! {
     panic!("abort");
 }
 
-fn resursive_insert(candidates: &mut HashMap<u64, Unit>, lookup: &mut Lookup,
-                    unit: Unit, promise_insert: &mut HashSet<u64>) {
-    promise_insert.insert(unit.global_id);
 
-
-    for id in unit.symbols.iter().filter_map(|sym| {
-        if let SymbolSectionIndex::Global(id) = sym.shndx {
-            Some(id)
+fn ldarg(arg: &String, argname: &str, argc: &mut usize) -> Option<String> {
+    if arg.starts_with(argname) {
+        Some(if arg.len() < argname.len() + 1 {
+            *argc += 1;
+            env::args().nth(*argc).unwrap()
         } else {
-            None
-        }
-    }).chain(unit.siblings.iter().cloned()) {
-        if id != unit.global_id && !promise_insert.contains(&id) && lookup.by_id.get(&id) == None {
-            match candidates.remove(&id) {
-                Some(unit) =>  {
-                    resursive_insert(candidates, lookup, unit, promise_insert);
-                },
-                None => panic!("bug in elfkit linker: {} dependant unit {} not found", unit.name, id),
-            };
+            String::from(&arg[2..])
+        })
+    } else {
+        None
+    }
+}
+
+
+#[derive(Default)]
+struct LdOptions {
+    dynamic_linker: String,
+    object_paths:   Vec<String>,
+    output_path:    String,
+}
+
+fn search_lib(search_paths: &Vec<String>, needle: &String) -> String{
+    let so = String::from("lib") + needle + ".a";
+    for p in search_paths {
+        let pc = Path::new(p).join(&so);
+        if pc.exists() {
+            return pc.into_os_string().into_string().unwrap();
         }
     }
-    lookup.insert_unit(unit);
+    fail(format!("ld.elfkit: cannot find: {} in {:?}", so, search_paths));
+}
+
+fn parse_ld_options() -> LdOptions{
+    let mut options         = LdOptions::default();
+    options.output_path     = String::from("a.out");
+    let mut search_paths    = Vec::new();
+
+    let mut argc = 1;
+    loop {
+        if argc >= env::args().len() {
+            break;
+        }
+
+        let arg = env::args().nth(argc).unwrap();
+        if let Some(val) = ldarg(&arg, "-L", &mut argc) {
+            search_paths.push(val);
+        } else if let Some(val) = ldarg(&arg, "-z", &mut argc) {
+            argc += 1;
+            let arg2 = env::args().nth(argc).unwrap();
+            println!("{}", format!("argument ignored: {} {}", arg,arg2).yellow());
+
+        } else if let Some(val) = ldarg(&arg, "-l", &mut argc) {
+            options.object_paths.push(search_lib(&search_paths, &val));
+        } else if let Some(val) = ldarg(&arg, "-m", &mut argc) {
+            if val != "elf_x86_64" {
+                fail(format!("machine not supported: {}", val));
+            }
+        } else if let Some(val) = ldarg(&arg, "-o", &mut argc) {
+            options.output_path = val;
+        } else if arg == "-pie" {
+        } else if arg == "-dynamic-linker" {
+            argc += 1;
+            options.dynamic_linker = env::args().nth(argc).unwrap()
+        } else if arg.starts_with("-") {
+            println!("{}", format!("argument ignored: {}",arg).yellow());
+        } else {
+            options.object_paths.push(arg);
+        }
+        argc +=1;
+    }
+
+    println!("linking {:?}", options.object_paths);
+
+    options
 }
 
 fn main() {
-    let mut elfs   = elfs_from_cli();
+
+    let ldoptions = parse_ld_options();
+    let mut elfs   = load_elfs(ldoptions.object_paths);
     let mut lookup = Lookup::default();
 
     let mut start  = Symbol::default();
@@ -88,7 +144,12 @@ fn main() {
             while cont {
                 cont = false;
                 for ei in 0..elfs.len() {
-                    if elfs[ei].1.contains_symbol(&lookup.symbols[mi].name).unwrap() {
+                    let contains = match elfs[ei].1.contains_symbol(&lookup.symbols[mi].name) {
+                        Ok(v)  => v,
+                        Err(e) => fail(format!("error in lookup in {} : {:?}",
+                                               elfs[ei].0, e)),
+                    };
+                    if contains {
                         let elf = elfs.swap_remove(ei);
                         for unit in Unit::from_elf(elf.0, elf.1, &mut global_id_counter) {
                             candidates.insert(unit.global_id.clone(), unit);
@@ -138,8 +199,7 @@ fn main() {
 
     println!("linking {} units into exe", lookup.units.len());
 
-    let out_filename = "/tmp/e";
-    let mut out_file = OpenOptions::new().write(true).truncate(true).create(true).open(out_filename).unwrap();
+    let mut out_file = OpenOptions::new().write(true).truncate(true).create(true).open(ldoptions.output_path).unwrap();
     let mut out_elf = Elf::default();
     out_elf.header.ident_class      = types::Class::Class64;
     out_elf.header.ident_endianness = types::Endianness::LittleEndian;
@@ -147,17 +207,14 @@ fn main() {
     out_elf.header.etype            = types::ElfType::DYN;
     out_elf.header.machine          = types::Machine::X86_64;
 
-    let mut sc_interp  : Vec<u8> = b"/lib64/ld-linux-x86-64.so.2\0".to_vec();
+    let mut sc_interp  : Vec<u8> = ldoptions.dynamic_linker.trim().bytes().collect();
+    sc_interp.push(0);
     let mut sc_rela    : Vec<Relocation>  = Vec::new();
     let mut sc_dynsym  : Vec<Symbol>    = vec![Symbol::default()];
     let mut sc_dynamic : Vec<Dynamic>   = vec![
         Dynamic{
             dhtype: types::DynamicType::FLAGS_1,
             content: DynamicContent::Flags1(types::DynamicFlags1::PIE),
-        },
-        Dynamic{
-            dhtype: types::DynamicType::RPATH,
-            content: DynamicContent::String(String::from("/home/aep/proj/musl/lib/")),
         },
     ];
     let mut sc_symtab : Vec<Symbol> = vec![Symbol::default()];
@@ -400,19 +457,52 @@ fn main() {
     out_elf.segments = linker::segments(&out_elf).unwrap();
     out_elf.store_all().unwrap();
     out_elf.to_writer(&mut out_file).unwrap();
+
+    let mut perms = out_file.metadata().unwrap().permissions();
+    perms.set_mode(0o755);
+    out_file.set_permissions(perms).unwrap();
+}
+
+
+fn resursive_insert(candidates: &mut HashMap<u64, Unit>, lookup: &mut Lookup,
+                    unit: Unit, promise_insert: &mut HashSet<u64>) {
+    promise_insert.insert(unit.global_id);
+
+    for id in &unit.deps {
+        if *id != unit.global_id && !promise_insert.contains(id) && lookup.by_id.get(id) == None {
+            match candidates.remove(&id) {
+                Some(unit) =>  {
+                    resursive_insert(candidates, lookup, unit, promise_insert);
+                },
+                None => panic!("bug in elfkit linker: {} dependant unit {} not found", unit.name, id),
+            };
+        }
+    }
+    lookup.insert_unit(unit);
 }
 
 
 
-
-fn elfs_from_cli() -> Vec<(String,Elf)> {
+fn load_elfs(paths: Vec<String>) -> Vec<(String,Elf)> {
     let mut elfs = Vec::new();
-    for in_path in env::args().skip(1) {
-        let mut in_file  = OpenOptions::new().read(true).open(&in_path).unwrap();
+    for in_path in paths {
+        let mut in_file  = match OpenOptions::new().read(true).open(&in_path) {
+            Ok(f) => f,
+            Err(e) => {
+                fail(format!("while loading '{}' : {:?}", in_path, e));
+            }
+        };
         let in_name = Path::new(&in_path).file_name().unwrap().to_string_lossy().into_owned();
         match filetype::filetype(&in_file).unwrap() {
             filetype::FileType::Elf => {
-                elfs.push((in_name, Elf::from_reader(&mut in_file).unwrap()));
+                elfs.push((in_name, match Elf::from_reader(&mut in_file) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        fail(format!("error loading {} : {:?}",
+                                               in_path, e));
+                    },
+
+                }));
             },
             filetype::FileType::Archive => {
                 let mut buffer = Vec::new();
@@ -423,7 +513,14 @@ fn elfs_from_cli() -> Vec<(String,Elf)> {
                             let mut io = Cursor::new(&buffer[
                                                      member.offset as usize ..
                                                      member.offset as usize + member.header.size]);
-                            elfs.push((String::from(name), Elf::from_reader(&mut io).unwrap()));
+
+                            match Elf::from_reader(&mut io) {
+                                Ok(e)  => elfs.push((String::from(name), e)),
+                                Err(e) => {
+                                    println!("{}", format!("skipping {} in {}: {:?}",
+                                                     name, in_path, e).yellow());
+                                },
+                            }
                         }
                     },
                     _ => unreachable!(),
@@ -469,7 +566,7 @@ struct Unit {
     pub code:        Vec<u8>,
     pub symbols:     Vec<Symbol>,
     pub relocations: Vec<Relocation>,
-    pub siblings:    Vec<u64>,
+    pub deps:    Vec<u64>,
 
     s_lookup: HashMap<String, usize>,
 }
@@ -492,7 +589,7 @@ impl Unit {
             symbols:    symbols,
             relocations:Vec::new(),
             s_lookup:   s_lookup,
-            siblings:   Vec::new(),
+            deps:   Vec::new(),
         }
     }
 
@@ -509,6 +606,9 @@ impl Unit {
             types::ElfType::DYN => LinkBehaviour::Dynamic,
             _ => LinkBehaviour::Static,
         };
+
+        assert!(behaviour == LinkBehaviour::Static,
+                format!("{}: linking to dynamic libraries is not implemented", name));
 
         let mut sec2global  = HashMap::new();
         let mut units       = HashMap::new();
@@ -554,7 +654,7 @@ impl Unit {
                             symbols:        Vec::new(),
                             relocations:    Vec::new(),
                             s_lookup:       HashMap::new(),
-                            siblings:       Vec::new(),
+                            deps:       Vec::new(),
                         });
                     },
                     types::SectionType::SYMTAB if behaviour == LinkBehaviour::Static => {
@@ -605,7 +705,10 @@ impl Unit {
                                 sym.shndx = match sec2global.get(&(sx as usize)) {
                                     None => fail(format!("{} rela {:?} -> {:?} to section {} which is not allocated",
                                                          obj.name, rela, sym, sx)),
-                                    Some(id) => SymbolSectionIndex::Global(*id),
+                                    Some(id) => {
+                                        obj.deps.push(*id);
+                                        SymbolSectionIndex::Global(*id)
+                                    },
                                 };
                             };
                             smap.insert(rela.sym as usize, obj.symbols.len());
@@ -650,7 +753,7 @@ impl Unit {
                     symbols:        symbols,
                     relocations:    Vec::new(),
                     s_lookup:       s_lookup,
-                    siblings:       Vec::new(),
+                    deps:       Vec::new(),
                 });
             }
         }
@@ -664,7 +767,7 @@ impl Unit {
         // this is nessesary because compilers assume that they can emit sections into objects which
         // will be made available for linking when some other section of that object gets linked in
         // TODO this seems  only relevant when that other section actually has symbols? hopefully
-        let siblings: Vec<u64> = units.iter().filter_map(|unit|{
+        let deps: Vec<u64> = units.iter().filter_map(|unit|{
             for sym in &unit.symbols {
                 if sym.shndx != SymbolSectionIndex::Undefined && sym.bind != types::SymbolBind::LOCAL {
                     return Some(unit.global_id);
@@ -674,7 +777,7 @@ impl Unit {
         }).collect();
 
         for unit in &mut units {
-            unit.siblings = siblings.clone();
+            unit.deps.extend(&deps);
         }
 
         units

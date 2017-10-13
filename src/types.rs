@@ -378,6 +378,9 @@ pub enum SymbolBind {
     GLOBAL      = 1,
     /// Weak symbol
     WEAK        = 2,
+
+    /// obscure gnu thing. i hope this is the same as global
+    STB_GNU_UNIQUE = 10,
 }
 impl Default for SymbolBind{
     fn default() -> Self {SymbolBind::LOCAL}
