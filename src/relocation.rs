@@ -45,14 +45,25 @@ pub enum RelocationType {
     R_X86_64_PC16       = 13, // word16 S + A - P
     R_X86_64_8          = 14, // word8 S + A
     R_X86_64_PC8        = 15, // word8 S + A - P
+
+
+    /// ID of module containing symbol
     R_X86_64_DTPMOD64   = 16, // word64
+    /// Offset in TLS Block
     R_X86_64_DTPOFF64   = 17, // word64
+    /// Offset in initial TLS Block
     R_X86_64_TPOFF64    = 18, // word64
+    /// PC Relative address to GD GOT block
     R_X86_64_TLSGD      = 19, // word32
+    /// PC Relative address to LD GOT block
     R_X86_64_TLSLD      = 20, // word32
+    /// Offset in TLS Block
     R_X86_64_DTPOFF32   = 21, // word32
+    /// PC Relative offset to IE GOT entry
     R_X86_64_GOTTPOFF   = 22, // word32
+    /// offset in initial TLS entry
     R_X86_64_TPOFF32    = 23, // word32
+
     R_X86_64_PC64       = 24, // word64 S + A - P
     R_X86_64_GOTOFF64   = 25, // word64 S + A - GOT
     R_X86_64_GOTPC32    = 26, // word32 GOT + A - P

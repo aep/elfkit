@@ -200,6 +200,7 @@ pub fn sysv_hash(s: &String) -> u64 {
 
 
 pub fn symhash(eh: &Header, symbols: &Vec<Symbol>, link: u32) -> Section {
+    assert!(symbols.len() > 0);
     //TODO i'm too lazy to do this correctly now, so we'll just emit a hashtable with nbuckets  == 1
     let mut b = Vec::new();
     {

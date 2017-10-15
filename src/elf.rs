@@ -257,7 +257,7 @@ impl Elf {
     pub fn store_all(&mut self) -> Result<(), Error> {
         self.header.shstrndx = match self.sections.iter().position(|s|s.name == ".shstrtab") {
             Some(i) => i as u16,
-            None => return Err(Error::MissingShstrtabSection),
+            None => 0,
         };
         loop {
             let mut still_need_to_store = false;
@@ -360,15 +360,16 @@ sec.name, sec.header.offset, off);
 
 
         //section headers
-        let mut off = io.seek(SeekFrom::End(0))? as usize;
-        self.header.shoff = off as u64;
-        for sec in &headers{
-            sec.to_writer(&self.header, io)?;
+        if self.header.shstrndx > 0 {
+            let mut off = io.seek(SeekFrom::End(0))? as usize;
+            self.header.shoff = off as u64;
+            for sec in &headers{
+                sec.to_writer(&self.header, io)?;
+            }
+            let at = io.seek(SeekFrom::Current(0))? as usize;
+            self.header.shnum       = headers.len() as u16;
+            self.header.shentsize   = SectionHeader::entsize(&self.header) as u16;
         }
-        let at = io.seek(SeekFrom::Current(0))? as usize;
-        self.header.shnum       = headers.len() as u16;
-        self.header.shentsize   = SectionHeader::entsize(&self.header) as u16;
-        off = at;
 
         //hygene
         self.header.ehsize = self.header.size() as u16;

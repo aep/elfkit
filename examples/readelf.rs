@@ -43,10 +43,10 @@ fn main() {
     println!("  Section header string table index: {}", elf.header.shstrndx);
     println!("");
     println!("{} at offset 0x{:x}:", "Section Headers".bold(), elf.header.shoff);
-    println!("  [Nr] Name             Type           Address          Offset   Size     EntS Flg Lnk Inf Al");
+    println!("  [Nr] Name                     Type           Address          Offset   Size     EntS Flg Lnk Inf Al");
 
     for (i, section) in elf.sections.iter().enumerate() {
-        println!("  [{:>2}] {:<16.16} {} {} {} {} {} {:<3} {:<3.3} {:<3} {:<2.2}",
+        println!("  [{:>2}] {:<24.24} {} {} {} {} {} {:<3} {:<3.3} {:<3} {:<2.2}",
                  i, section.name.bold(),
                  match section.header.shtype.typename(&elf.header) {
                      Some(s) => format!("{:<14.14}", s),
@@ -88,7 +88,7 @@ fn main() {
 
     let mut fls = vec![
         ("elf header",      0, elf.header.ehsize as u64),
-        ("section headers", elf.header.shoff, (elf.header.shentsize * elf.header.shnum) as u64),
+        ("section headers", elf.header.shoff, elf.header.shentsize as u64 * elf.header.shnum as u64),
     ];
     if elf.header.phoff > 0 {
         fls.push(("segment headers", elf.header.phoff, (elf.header.phentsize * elf.header.phnum) as u64));
