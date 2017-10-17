@@ -218,6 +218,7 @@ impl SectionType {
     pub const SYMTAB_SHNDX        : SectionType = SectionType(18);
     /// Number of defined types
     pub const NUM                 : SectionType = SectionType(19);
+
     /// Object attributes
     pub const GNU_ATTRIBUTES      : SectionType = SectionType(0x6ffffff5);
     /// GNU-style hash table
@@ -250,6 +251,9 @@ impl SectionType {
     pub const MIPS_UCODE          : SectionType = SectionType(0x70000004);
     pub const MIPS_DEBUG          : SectionType = SectionType(0x70000005);
     pub const MIPS_REGINFO        : SectionType = SectionType(0x70000006);
+
+    /// Relinkable content. this is a korhal bolter extension
+    pub const RELINKABLE          : SectionType = SectionType(0x6fffff01);
 
     pub fn to_u32(&self) -> u32 {
         let &SectionType(v) = self;
@@ -297,6 +301,7 @@ impl SectionType {
             (&Machine::ARM, &SectionType::ARM_ATTRIBUTES    ) => Some("ARM_ATTRIBUTES"),
             (&Machine::ARM, &SectionType::ARM_DEBUGOVERLAY  ) => Some("ARM_DEBUGOVERLAY"),
             (&Machine::ARM, &SectionType::ARM_OVERLAYSECTION) => Some("ARM_OVERLAYSECTION"),
+            (_,&SectionType::RELINKABLE)  => Some("RELINKABLE"),
             (_,_) => None,
         }
     }
