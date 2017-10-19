@@ -8,13 +8,13 @@ use relocation::*;
 use strtab::*;
 use segment::*;
 
-use std::io::{Read, Write, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::io::BufWriter;
 use std;
 use std::collections::HashSet;
 
 pub struct Elf {
-    pub header:   Header,
+    pub header: Header,
     pub segments: Vec<SegmentHeader>,
     pub sections: Vec<Section>,
 
@@ -24,7 +24,7 @@ pub struct Elf {
 impl Default for Elf {
     fn default() -> Self {
         let mut r = Elf {
-            header:   Header::default(),
+            header: Header::default(),
             segments: Vec::default(),
             sections: Vec::default(),
             s_lookup: None,
@@ -37,8 +37,10 @@ impl Default for Elf {
 }
 
 impl Elf {
-
-    pub fn from_reader<R>(io: &mut R) -> Result<Elf, Error> where R: Read + Seek {
+    pub fn from_reader<R>(io: &mut R) -> Result<Elf, Error>
+    where
+        R: Read + Seek,
+    {
         let mut r = Elf::default();
         r.header = Header::from_reader(io)?;
 
@@ -60,12 +62,10 @@ impl Elf {
 
         // read section content
         for sh in section_headers {
-            r.sections.push(Section{
+            r.sections.push(Section {
                 name: String::default(),
                 content: match sh.shtype {
-                    types::SectionType::NULL | types::SectionType::NOBITS => {
-                        SectionContent::None
-                    },
+                    types::SectionType::NULL | types::SectionType::NOBITS => SectionContent::None,
                     _ => {
                         io.seek(SeekFrom::Start(sh.offset))?;
                         let mut bb = vec![0; sh.size as usize];
@@ -80,55 +80,60 @@ impl Elf {
         // resolve section names
         let shstrtab = match r.sections.get(r.header.shstrndx as usize) {
             None => return Err(Error::MissingShstrtabSection),
-            Some(sec) => {
-                match sec.content {
-                    SectionContent::Raw(ref s) => s,
-                    _ => return Err(Error::MissingShstrtabSection),
-                }
-            }
+            Some(sec) => match sec.content {
+                SectionContent::Raw(ref s) => s,
+                _ => return Err(Error::MissingShstrtabSection),
+            },
         }.clone();
 
         for ref mut sec in &mut r.sections {
             sec.name = String::from_utf8_lossy(
-                shstrtab[sec.header.name as usize ..].split(|e|*e==0).next().unwrap_or(&[0;0])
-                ).into_owned();
+                shstrtab[sec.header.name as usize..]
+                    .split(|e| *e == 0)
+                    .next()
+                    .unwrap_or(&[0; 0]),
+            ).into_owned();
         }
 
         Ok(r)
     }
 
-    fn load(&self, raw: Vec<u8>, sh: &SectionHeader, linked: Option<&SectionContent>)
-        -> Result<(SectionContent), Error> {
-            Ok(match sh.shtype {
-                types::SectionType::STRTAB => {
-                    let io = &raw[..];
-                    Strtab::from_reader(io, linked, &self.header)?
-                },
-                types::SectionType::RELA   => {
-                    let io = &raw[..];
-                    Relocation::from_reader(io, linked, &self.header)?
-                },
-                types::SectionType::SYMTAB | types::SectionType::DYNSYM => {
-                    let io = &raw[..];
-                    Symbol::from_reader(io, linked, &self.header)?
-                }
-                types::SectionType::DYNAMIC => {
-                    let io = &raw[..];
-                    Dynamic::from_reader(io, linked, &self.header)?
-                }
-                _ => SectionContent::Raw(raw),
-            })
-        }
+    fn load(
+        &self,
+        raw: Vec<u8>,
+        sh: &SectionHeader,
+        linked: Option<&SectionContent>,
+    ) -> Result<(SectionContent), Error> {
+        Ok(match sh.shtype {
+            types::SectionType::STRTAB => {
+                let io = &raw[..];
+                Strtab::from_reader(io, linked, &self.header)?
+            }
+            types::SectionType::RELA => {
+                let io = &raw[..];
+                Relocation::from_reader(io, linked, &self.header)?
+            }
+            types::SectionType::SYMTAB | types::SectionType::DYNSYM => {
+                let io = &raw[..];
+                Symbol::from_reader(io, linked, &self.header)?
+            }
+            types::SectionType::DYNAMIC => {
+                let io = &raw[..];
+                Dynamic::from_reader(io, linked, &self.header)?
+            }
+            _ => SectionContent::Raw(raw),
+        })
+    }
 
 
-    pub fn load_at(&mut self, i: usize) -> Result<(), Error>{
+    pub fn load_at(&mut self, i: usize) -> Result<(), Error> {
         let is_loaded = match self.sections[i].content {
             SectionContent::Raw(_) | SectionContent::None => false,
             _ => true,
         };
 
         if is_loaded {
-            return Ok(())
+            return Ok(());
         }
 
         //take out the original. this is to work around the borrow checker
@@ -144,9 +149,7 @@ impl Elf {
             };
 
             sec.content = match sec.content {
-                SectionContent::Raw(raw) => {
-                    self.load(raw, &sec.header, linked)?
-                },
+                SectionContent::Raw(raw) => self.load(raw, &sec.header, linked)?,
                 any => any,
             };
         }
@@ -164,25 +167,21 @@ impl Elf {
         Ok(())
     }
 
-
-
-
-
-
-
-
-
-    fn store(eh: &Header, mut sec: Section, mut linked: Option<&mut SectionContent>) -> Result<(Section), Error> {
+    fn store(
+        eh: &Header,
+        mut sec: Section,
+        mut linked: Option<&mut SectionContent>,
+    ) -> Result<(Section), Error> {
         match sec.content {
             SectionContent::Relocations(vv) => {
                 let mut raw = Vec::new();
                 for v in vv {
                     v.to_writer(&mut raw, None, eh)?;
                 }
-                sec.header.entsize  = Relocation::entsize(eh) as u64;
-                sec.header.size     = raw.len() as u64;
-                sec.content         = SectionContent::Raw(raw);
-            },
+                sec.header.entsize = Relocation::entsize(eh) as u64;
+                sec.header.size = raw.len() as u64;
+                sec.content = SectionContent::Raw(raw);
+            }
             SectionContent::Symbols(vv) => {
                 for (i, sym) in vv.iter().enumerate() {
                     if sym.bind == types::SymbolBind::GLOBAL {
@@ -192,42 +191,41 @@ impl Elf {
                 }
                 let mut raw = Vec::new();
                 for v in vv {
-                    v.to_writer(&mut raw, linked.as_mut().map(|r|&mut **r), eh)?;
+                    v.to_writer(&mut raw, linked.as_mut().map(|r| &mut **r), eh)?;
                 }
-                sec.header.entsize  = Symbol::entsize(eh) as u64;
-                sec.header.size     = raw.len() as u64;
-                sec.content         = SectionContent::Raw(raw);
-            },
+                sec.header.entsize = Symbol::entsize(eh) as u64;
+                sec.header.size = raw.len() as u64;
+                sec.content = SectionContent::Raw(raw);
+            }
             SectionContent::Dynamic(vv) => {
                 let mut raw = Vec::new();
                 for v in vv {
-                    v.to_writer(&mut raw, linked.as_mut().map(|r|&mut **r), eh)?;
+                    v.to_writer(&mut raw, linked.as_mut().map(|r| &mut **r), eh)?;
                 }
-                sec.header.entsize  = Dynamic::entsize(eh) as u64;
-                sec.header.size     = raw.len() as u64;
-                sec.content         = SectionContent::Raw(raw);
-
-            },
+                sec.header.entsize = Dynamic::entsize(eh) as u64;
+                sec.header.size = raw.len() as u64;
+                sec.content = SectionContent::Raw(raw);
+            }
             SectionContent::Strtab(v) => {
                 let mut raw = Vec::new();
                 v.to_writer(&mut raw, None, eh)?;
-                sec.header.entsize  = Strtab::entsize(eh) as u64;
-                sec.header.size     = raw.len() as u64;
-                sec.content         = SectionContent::Raw(raw);
-            },
-            SectionContent::None | SectionContent::Raw(_) => {},
+                sec.header.entsize = Strtab::entsize(eh) as u64;
+                sec.header.size = raw.len() as u64;
+                sec.content = SectionContent::Raw(raw);
+            }
+            SectionContent::None | SectionContent::Raw(_) => {}
         };
         Ok(sec)
     }
 
-    fn store_at(&mut self, i: usize) -> Result<(bool), Error>{
+    fn store_at(&mut self, i: usize) -> Result<(bool), Error> {
         let is_stored = match self.sections[i].content {
             SectionContent::Raw(_) | SectionContent::None => true,
             _ => false,
         };
 
         if is_stored {
-            return Ok((false))
+            return Ok((false));
         }
 
         //take out the original. this is to work around the borrow checker
@@ -245,7 +243,6 @@ impl Elf {
             };
 
             sec = Elf::store(&self.header, sec, linked)?;
-
         }
 
         //put it back in
@@ -255,17 +252,17 @@ impl Elf {
     }
 
     pub fn store_all(&mut self) -> Result<(), Error> {
-        self.header.shstrndx = match self.sections.iter().position(|s|s.name == ".shstrtab") {
+        self.header.shstrndx = match self.sections.iter().position(|s| s.name == ".shstrtab") {
             Some(i) => i as u16,
             None => 0,
         };
         loop {
             let mut still_need_to_store = false;
-            for i in 0..self.sections.len(){
+            for i in 0..self.sections.len() {
                 still_need_to_store = still_need_to_store || self.store_at(i)?;
             }
             if !still_need_to_store {
-                break
+                break;
             }
         }
 
@@ -275,22 +272,28 @@ impl Elf {
     /// write out everything to linked sections, such as string tables
     /// after calling this function, size() is reliable for all sections
     pub fn sync_all(&mut self) -> Result<(), Error> {
-        match self.sections.iter().position(|s|s.name == ".shstrtab") {
+        match self.sections.iter().position(|s| s.name == ".shstrtab") {
             Some(i) => {
                 self.header.shstrndx = i as u16;
                 let mut shstrtab = std::mem::replace(
-                    &mut self.sections[self.header.shstrndx as usize].content, SectionContent::default());
+                    &mut self.sections[self.header.shstrndx as usize].content,
+                    SectionContent::default(),
+                );
 
                 for sec in &mut self.sections {
-                    sec.header.name = shstrtab.as_strtab_mut().unwrap().insert(sec.name.as_bytes().to_vec()) as u32;
+                    sec.header.name = shstrtab
+                        .as_strtab_mut()
+                        .unwrap()
+                        .insert(sec.name.as_bytes().to_vec())
+                        as u32;
                 }
                 self.sections[self.header.shstrndx as usize].content = shstrtab;
             }
-            None => {},
+            None => {}
         };
 
 
-        let mut dirty : Vec<usize> = (0..self.sections.len()).collect();
+        let mut dirty: Vec<usize> = (0..self.sections.len()).collect();
         while dirty.len() > 0 {
             for i in std::mem::replace(&mut dirty, Vec::new()).iter() {
                 //work around the borrow checker
@@ -316,11 +319,13 @@ impl Elf {
         Ok(())
     }
 
-    pub fn to_writer<R>(&mut self, io: &mut R) -> Result<(), Error> where R: Write + Seek {
-
+    pub fn to_writer<R>(&mut self, io: &mut R) -> Result<(), Error>
+    where
+        R: Write + Seek,
+    {
         io.seek(SeekFrom::Start(0))?;
         let mut off = self.header.size();
-        io.write(&vec![0;off])?;
+        io.write(&vec![0; off])?;
 
         // segment headers
         // MUST be written before section content, because it MUST be in the first LOAD
@@ -331,30 +336,38 @@ impl Elf {
                 seg.to_writer(&self.header, io)?;
             }
             let at = io.seek(SeekFrom::Current(0))? as usize;
-            self.header.phnum       = self.segments.len() as u16;
-            self.header.phentsize   = ((at - off)/ self.segments.len()) as u16;
+            self.header.phnum = self.segments.len() as u16;
+            self.header.phentsize = ((at - off) / self.segments.len()) as u16;
             off = at;
         }
 
-        let headers : Vec<SectionHeader> = self.sections.iter().map(|s|s.header.clone()).collect();
+        let headers: Vec<SectionHeader> = self.sections.iter().map(|s| s.header.clone()).collect();
         let mut sections = std::mem::replace(&mut self.sections, Vec::new());
 
         //sections
-        sections.sort_unstable_by(|a,b|a.header.offset.cmp(&b.header.offset));
+        sections.sort_unstable_by(|a, b| a.header.offset.cmp(&b.header.offset));
         for sec in sections {
             let off = io.seek(SeekFrom::Current(0))? as usize;
 
-            assert_eq!(io.seek(SeekFrom::Start(sec.header.offset))?, sec.header.offset);
+            assert_eq!(
+                io.seek(SeekFrom::Start(sec.header.offset))?,
+                sec.header.offset
+            );
             match sec.content {
                 SectionContent::Raw(ref v) => {
                     if off > sec.header.offset as usize {
-                        println!("BUG: section layout is broken. \
-would write section '{}' at position 0x{:x} over previous section that ended at 0x{:x}",
-sec.name, sec.header.offset, off);
+                        println!(
+                            "BUG: section layout is broken. \
+                             would write section '{}' at position 0x{:x} over previous section \
+                             that ended at 0x{:x}",
+                            sec.name,
+                            sec.header.offset,
+                            off
+                        );
                     }
                     io.write(&v.as_ref())?;
                 }
-                _ => {},
+                _ => {}
             }
         }
 
@@ -363,12 +376,12 @@ sec.name, sec.header.offset, off);
         if self.header.shstrndx > 0 {
             let mut off = io.seek(SeekFrom::End(0))? as usize;
             self.header.shoff = off as u64;
-            for sec in &headers{
+            for sec in &headers {
                 sec.to_writer(&self.header, io)?;
             }
             let at = io.seek(SeekFrom::Current(0))? as usize;
-            self.header.shnum       = headers.len() as u16;
-            self.header.shentsize   = SectionHeader::entsize(&self.header) as u16;
+            self.header.shnum = headers.len() as u16;
+            self.header.shentsize = SectionHeader::entsize(&self.header) as u16;
         }
 
         //hygene
@@ -385,18 +398,19 @@ sec.name, sec.header.offset, off);
         let r = self.sections.remove(at);
 
         for sec in &mut self.sections {
-            if sec.header.link == at as u32{
+            if sec.header.link == at as u32 {
                 sec.header.link = 0;
-                //println!("warning: removed section {} has a dangling link from {}", at, sec.name);
-            } else if sec.header.link > at as u32{
+            //println!("warning: removed section {} has a dangling link from {}", at, sec.name);
+            } else if sec.header.link > at as u32 {
                 sec.header.link -= 1;
             }
 
             if sec.header.flags.contains(types::SectionFlags::INFO_LINK) {
-                if sec.header.info == at as u32{
+                if sec.header.info == at as u32 {
                     sec.header.info = 0;
-                   //println!("warning: removed section {} has a dangling info link from {}", at, sec.name);
-                } else if sec.header.info > at as u32{
+                //println!("warning: removed section {} has a dangling info link from {}", at,
+                //sec.name);
+                } else if sec.header.info > at as u32 {
                     sec.header.info -= 1;
                 }
             }
@@ -408,12 +422,12 @@ sec.name, sec.header.offset, off);
         self.sections.insert(at, sec);
 
         for sec in &mut self.sections {
-            if sec.header.link >= at as u32{
+            if sec.header.link >= at as u32 {
                 sec.header.link += 1;
             }
 
             if sec.header.flags.contains(types::SectionFlags::INFO_LINK) {
-                if sec.header.info > at as u32{
+                if sec.header.info > at as u32 {
                     sec.header.info += 1;
                 }
             }
@@ -422,9 +436,9 @@ sec.name, sec.header.offset, off);
         Ok(())
     }
 
-    pub fn move_section(&mut self, from: usize, mut to:usize) -> Result<(), Error> {
+    pub fn move_section(&mut self, from: usize, mut to: usize) -> Result<(), Error> {
         if to == from {
-            return Ok(())
+            return Ok(());
         }
         if to > from {
             to -= 1;
@@ -432,11 +446,11 @@ sec.name, sec.header.offset, off);
 
 
         for sec in &mut self.sections {
-            if sec.header.link == from as u32{
+            if sec.header.link == from as u32 {
                 sec.header.link = 999999;
             }
             if sec.header.flags.contains(types::SectionFlags::INFO_LINK) {
-                if sec.header.info == from as u32{
+                if sec.header.info == from as u32 {
                     sec.header.info = 999999;
                 }
             }
@@ -444,11 +458,11 @@ sec.name, sec.header.offset, off);
         let sec = self.remove_section(from)?;
         self.insert_section(to, sec)?;
         for sec in &mut self.sections {
-            if sec.header.link == 999999{
+            if sec.header.link == 999999 {
                 sec.header.link = to as u32;
             }
             if sec.header.flags.contains(types::SectionFlags::INFO_LINK) {
-                if sec.header.info == 999999{
+                if sec.header.info == 999999 {
                     sec.header.info = to as u32;
                 }
             }
@@ -475,21 +489,30 @@ impl Elf {
         if None == self.s_lookup {
             let mut hm = HashSet::new();
 
-            for i in self.sections.iter().enumerate().filter_map(|(i, ref sec)|{
-                if sec.header.shtype == types::SectionType::SYMTAB ||
-                    sec.header.shtype == types::SectionType::DYNSYM {
-                        Some (i)
+            for i in self.sections
+                .iter()
+                .enumerate()
+                .filter_map(|(i, ref sec)| {
+                    if sec.header.shtype == types::SectionType::SYMTAB
+                        || sec.header.shtype == types::SectionType::DYNSYM
+                    {
+                        Some(i)
                     } else {
                         None
                     }
-            }).collect::<Vec<usize>>().iter() {
+                })
+                .collect::<Vec<usize>>()
+                .iter()
+            {
                 self.load_at(*i)?;
                 for sym in self.sections[*i].content.as_symbols().unwrap() {
-                    if sym.bind != types::SymbolBind::LOCAL && sym.shndx != SymbolSectionIndex::Undefined {
+                    if sym.bind != types::SymbolBind::LOCAL
+                        && sym.shndx != SymbolSectionIndex::Undefined
+                    {
                         hm.insert(sym.name.clone());
                     }
                 }
-            };
+            }
 
             self.s_lookup = Some(hm);
         }

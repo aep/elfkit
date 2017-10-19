@@ -1,7 +1,7 @@
 ALL: amd64_pie_asm amd64_pie_c dx_asm dx_asm_dyn px_asm px_asm_dyn plt_asm plt_asm_dyn got_asm got_asm_dyn
 
 CFLAGS=-fPIC -g
-LDFLAGS=-g --dynamic-linker=/usr/lib/ld-2.26.so
+LDFLAGS=-g -l:ld-linux-x86-64.so.2
 
 %.o: %.asm
 	nasm -f elf64 -o $@ $^
