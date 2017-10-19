@@ -1,5 +1,5 @@
 use std::io::{Read, Write};
-use {types, Error, Header, SectionContent};
+use {Error, Header, SectionContent};
 use std::collections::hash_map::{Entry, HashMap};
 
 #[derive(Debug, Default, Clone)]
@@ -12,13 +12,13 @@ impl Strtab {
     pub fn len(&self, _: &Header) -> usize {
         self.data.len()
     }
-    pub fn entsize(eh: &Header) -> usize {
+    pub fn entsize(_: &Header) -> usize {
         1
     }
     pub fn from_reader<R>(
         mut io: R,
-        linked: Option<&SectionContent>,
-        eh: &Header,
+        _: Option<&SectionContent>,
+        _: &Header,
     ) -> Result<SectionContent, Error>
     where
         R: Read,
@@ -48,8 +48,8 @@ impl Strtab {
     pub fn to_writer<W>(
         &self,
         mut io: W,
-        linked: Option<&mut SectionContent>,
-        eh: &Header,
+        _: Option<&mut SectionContent>,
+        _: &Header,
     ) -> Result<(), Error>
     where
         W: Write,
@@ -67,7 +67,7 @@ impl Strtab {
             .into_owned()
     }
 
-    pub fn insert(&mut self, mut ns: Vec<u8>) -> usize {
+    pub fn insert(&mut self, ns: Vec<u8>) -> usize {
         //special handling for null. for some reason rusts hashmap doesn't do that correctly
         if self.data.len() < 1 {
             self.data.push(0)

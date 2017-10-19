@@ -185,10 +185,10 @@ impl Symbol {
         Ok(())
     }
 
-    pub fn sync(&self, linked: Option<&mut SectionContent>, eh: &Header) -> Result<(), Error> {
+    pub fn sync(&self, linked: Option<&mut SectionContent>, _: &Header) -> Result<(), Error> {
         match linked {
             Some(&mut SectionContent::Strtab(ref mut strtab)) => {
-                let off = strtab.insert(self.name.bytes().collect()) as u32;
+                strtab.insert(self.name.bytes().collect());
             }
             _ => return Err(Error::LinkedSectionIsNotStrtab("syncing symbols")),
         }
@@ -198,7 +198,7 @@ impl Symbol {
 
 pub fn sysv_hash(s: &String) -> u64 {
     let mut h: u64 = 0;
-    let mut g: u64 = 0;
+    let mut g: u64;
 
     for byte in s.bytes() {
         h = (h << 4) + byte as u64;
@@ -212,29 +212,29 @@ pub fn sysv_hash(s: &String) -> u64 {
 }
 
 
-pub fn symhash(eh: &Header, symbols: &Vec<Symbol>, link: u32) -> Section {
+pub fn symhash(eh: &Header, symbols: &Vec<Symbol>, link: u32) -> Result<Section, Error> {
     assert!(symbols.len() > 0);
     //TODO i'm too lazy to do this correctly now, so we'll just emit a hashtable with nbuckets  == 1
     let mut b = Vec::new();
     {
-        let mut io = &mut b;
-        elf_write_uclass!(eh, io, 1); //nbuckets
-        elf_write_uclass!(eh, io, symbols.len() as u64); //nchains
+        let io = &mut b;
+        elf_write_uclass!(eh, io, 1)?; //nbuckets
+        elf_write_uclass!(eh, io, symbols.len() as u64)?; //nchains
 
-        elf_write_uclass!(eh, io, 1); //the bucket. pointing at symbol 1
+        elf_write_uclass!(eh, io, 1)?; //the bucket. pointing at symbol 1
 
-        elf_write_uclass!(eh, io, 0); //symbol 0
+        elf_write_uclass!(eh, io, 0)?; //symbol 0
 
         //the chains. every symbol just points at the next, because nbuckets == 1
         for i in 1..symbols.len() - 1 {
-            elf_write_uclass!(eh, io, i as u64 + 1);
+            elf_write_uclass!(eh, io, i as u64 + 1)?;
         }
 
         //except the last one
-        elf_write_uclass!(eh, io, 0);
+        elf_write_uclass!(eh, io, 0)?;
     }
 
-    Section {
+    Ok(Section {
         name: String::from(".hash"),
         header: SectionHeader {
             name: 0,
@@ -249,5 +249,5 @@ pub fn symhash(eh: &Header, symbols: &Vec<Symbol>, link: u32) -> Section {
             entsize: 8, // or 4 for CLass32
         },
         content: SectionContent::Raw(b),
-    }
+    })
 }

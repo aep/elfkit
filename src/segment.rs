@@ -3,7 +3,7 @@ use types;
 use header::Header;
 
 use std::io::BufWriter;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
 use num_traits::{FromPrimitive, ToPrimitive};
 
 #[derive(Default, Debug, Clone)]
