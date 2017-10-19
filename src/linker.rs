@@ -1,4 +1,4 @@
-use {types, Dynamic, Elf, Error, Header, SectionHeader, SegmentHeader};
+use {types, Dynamic, Elf, Error, SegmentHeader};
 use dynamic::DynamicContent;
 use relocation::RelocationType;
 
@@ -93,8 +93,6 @@ pub fn segments(elf: &Elf) -> Result<Vec<SegmentHeader>, Error> {
             vshift = section.header.addr as i64 - section.header.offset as i64;
             vstart = section.header.addr;
             pstart = section.header.offset;
-            voff = 0;
-            poff = 0;
             flags = types::SegmentFlags::READABLE;
         }
 

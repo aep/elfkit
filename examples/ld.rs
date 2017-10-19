@@ -1,14 +1,13 @@
 extern crate byteorder;
 extern crate colored;
-#[macro_use]
 extern crate elfkit;
 extern crate goblin;
 
 use std::env;
-use std::io::{Cursor, Read, Seek};
+use std::io::{Cursor, Read};
 use std::fs::OpenOptions;
-use elfkit::{types, Dynamic, Elf, Error, Header, Relocation, Section, SectionContent,
-             SectionHeader, SegmentHeader, Strtab, Symbol, SymbolSectionIndex};
+use elfkit::{types, Dynamic, Elf, Relocation, Section, SectionContent,
+             Strtab, Symbol, SymbolSectionIndex};
 
 use elfkit::filetype;
 use elfkit::linker;
@@ -78,7 +77,7 @@ fn parse_ld_options() -> LdOptions {
         let arg = env::args().nth(argc).unwrap();
         if let Some(val) = ldarg(&arg, "-L", &mut argc) {
             search_paths.push(val);
-        } else if let Some(val) = ldarg(&arg, "-z", &mut argc) {
+        } else if let Some(_) = ldarg(&arg, "-z", &mut argc) {
             argc += 1;
             let arg2 = env::args().nth(argc).unwrap();
             println!("{}", format!("argument ignored: {} {}", arg, arg2).yellow());
@@ -448,7 +447,8 @@ fn main() {
     let sh_index_dynstr = out_elf.sections.len() + 3;
 
     let sh_index_dynsym = out_elf.sections.len();
-    let symhash = elfkit::symbol::symhash(&out_elf.header, &sc_dynsym, sh_index_dynsym as u32);
+    let symhash = elfkit::symbol::symhash(&out_elf.header, &sc_dynsym, sh_index_dynsym as u32)
+        .expect("error writing symhash");
     let first_global_dynsym = sc_dynsym
         .iter()
         .enumerate()
@@ -467,7 +467,7 @@ fn main() {
     out_elf.sections.push(symhash);
 
 
-    sc_rela.sort_unstable_by(|a, b| if a.rtype == RelocationType::R_X86_64_RELATIVE {
+    sc_rela.sort_unstable_by(|a, _| if a.rtype == RelocationType::R_X86_64_RELATIVE {
         std::cmp::Ordering::Less
     } else {
         std::cmp::Ordering::Greater
@@ -846,7 +846,7 @@ impl Unit {
             }
         }
 
-        let mut units = units.into_iter().map(|(k, v)| v).collect::<Vec<Unit>>();
+        let mut units = units.into_iter().map(|(_, v)| v).collect::<Vec<Unit>>();
 
 
         //we can emit COMMON symbols as WEAK in a bss

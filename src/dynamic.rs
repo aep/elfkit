@@ -116,11 +116,11 @@ impl Dynamic {
         Ok(())
     }
 
-    pub fn sync(&self, linked: Option<&mut SectionContent>, eh: &Header) -> Result<(), Error> {
+    pub fn sync(&self, linked: Option<&mut SectionContent>, _: &Header) -> Result<(), Error> {
         match self.content {
             DynamicContent::String(ref s) => match linked {
                 Some(&mut SectionContent::Strtab(ref mut strtab)) => {
-                    let off = strtab.insert(s.bytes().collect()) as u32;
+                    strtab.insert(s.bytes().collect());
                 }
                 _ => return Err(Error::LinkedSectionIsNotStrtab("syncing dynamic")),
             },

@@ -9,7 +9,6 @@ use strtab::*;
 use segment::*;
 
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::io::BufWriter;
 use std;
 use std::collections::HashSet;
 
@@ -23,7 +22,7 @@ pub struct Elf {
 
 impl Default for Elf {
     fn default() -> Self {
-        let mut r = Elf {
+        let r = Elf {
             header: Header::default(),
             segments: Vec::default(),
             sections: Vec::default(),
@@ -324,7 +323,7 @@ impl Elf {
         R: Write + Seek,
     {
         io.seek(SeekFrom::Start(0))?;
-        let mut off = self.header.size();
+        let off = self.header.size();
         io.write(&vec![0; off])?;
 
         // segment headers
@@ -338,7 +337,6 @@ impl Elf {
             let at = io.seek(SeekFrom::Current(0))? as usize;
             self.header.phnum = self.segments.len() as u16;
             self.header.phentsize = ((at - off) / self.segments.len()) as u16;
-            off = at;
         }
 
         let headers: Vec<SectionHeader> = self.sections.iter().map(|s| s.header.clone()).collect();
@@ -374,12 +372,11 @@ impl Elf {
 
         //section headers
         if self.header.shstrndx > 0 {
-            let mut off = io.seek(SeekFrom::End(0))? as usize;
+            let off = io.seek(SeekFrom::End(0))? as usize;
             self.header.shoff = off as u64;
             for sec in &headers {
                 sec.to_writer(&self.header, io)?;
             }
-            let at = io.seek(SeekFrom::Current(0))? as usize;
             self.header.shnum = headers.len() as u16;
             self.header.shentsize = SectionHeader::entsize(&self.header) as u16;
         }

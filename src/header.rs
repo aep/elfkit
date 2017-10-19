@@ -1,5 +1,5 @@
 use num_traits::{FromPrimitive, ToPrimitive};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
 use std::io::BufWriter;
 use error::Error;
 use types;

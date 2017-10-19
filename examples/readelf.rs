@@ -6,7 +6,6 @@ use std::fs::File;
 use elfkit::{types, DynamicContent, Elf, SectionContent};
 use elfkit::relocation::RelocationType;
 use elfkit::symbol::SymbolSectionIndex;
-use std::io::{Read, Seek, SeekFrom};
 use colored::*;
 
 fn hextab<S>(align: usize, s: S) -> String
@@ -231,7 +230,7 @@ fn main() {
             println!("");
         }
         print!("                                         ");
-        for segment in elf.segments.iter() {
+        for _ in elf.segments.iter() {
             print!("---|")
         }
         println!("");
@@ -240,7 +239,7 @@ fn main() {
 
 
     let mut cfileoff = 0;
-    let mut fls_intermediate = fls.drain(..).collect::<Vec<(&str, u64, u64)>>();
+    let fls_intermediate = fls.drain(..).collect::<Vec<(&str, u64, u64)>>();
     for (name, off, size) in fls_intermediate {
         if cfileoff < off {
             fls.push(("", cfileoff, off - cfileoff));
@@ -249,7 +248,7 @@ fn main() {
         cfileoff = off + size;
     }
 
-    if let Some(&(name, off, size)) = fls.last() {
+    if let Some(&(_, off, size)) = fls.last() {
         let filelen = file.metadata().unwrap().len();
         if off + size < filelen {
             fls.push(("", off + size, filelen - (off + size)));

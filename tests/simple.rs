@@ -1,11 +1,7 @@
 extern crate elfkit;
 
-use std::env;
 use std::fs::File;
 use elfkit::Elf;
-use elfkit::symbol::Symbol;
-use std::io::{Read, Seek, SeekFrom};
-
 
 #[test]
 fn amd64_exe_sections() {

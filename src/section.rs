@@ -6,7 +6,7 @@ use symbol::Symbol;
 use strtab::Strtab;
 use types;
 
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
 use std::io::BufWriter;
 
 #[derive(Default, Debug, Clone)]
@@ -199,7 +199,7 @@ impl Section {
         mut linked: Option<&mut SectionContent>,
     ) -> Result<(), Error> {
         match self.content {
-            SectionContent::Relocations(ref vv) => {
+            SectionContent::Relocations(_) => {
                 self.header.entsize = Relocation::entsize(eh) as u64;
             }
             SectionContent::Symbols(ref vv) => {
@@ -220,7 +220,7 @@ impl Section {
                 }
                 self.header.entsize = Dynamic::entsize(eh) as u64;
             }
-            SectionContent::Strtab(ref v) => {
+            SectionContent::Strtab(_) => {
                 self.header.entsize = Strtab::entsize(eh) as u64;
             }
             SectionContent::None | SectionContent::Raw(_) => {}
