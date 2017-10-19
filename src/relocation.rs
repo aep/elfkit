@@ -1,5 +1,5 @@
 use std::io::{Read, Write};
-use {Header, Error, SectionContent};
+use {Error, Header, SectionContent};
 use types;
 use num_traits::{FromPrimitive, ToPrimitive};
 
@@ -19,8 +19,8 @@ L Represents the place (section offset or address) of the Procedure Linkage Tabl
 entry for a symbol.
 
 P Represents the place (section offset or address) of the storage unit being relocated
--> that is the relocations offset in loaded memory, so for example a relocation at offset 0x3 in .text
-which is loaded at 0x100 will have P = 0x103
+-> that is the relocations offset in loaded memory, so for example a relocation at offset 0x3 in
+.text which is loaded at 0x100 will have P = 0x103
 
 S Represents the value of the symbol whose index resides in the relocation entry.
 The AMD64 ABI architectures uses only Elf64_Rela relocation entries
@@ -29,81 +29,89 @@ with explicit addends. The r_addend member serves as the relocation addend.
 #[allow(non_camel_case_types)]
 #[derive(Debug, Primitive, PartialEq, Clone)]
 pub enum RelocationType {
-    R_X86_64_NONE       = 0,  // none none
-    R_X86_64_64         = 1,  // word64 S + A
-    R_X86_64_PC32       = 2,  // word32 S + A - P
-    R_X86_64_GOT32      = 3,  // word32 G + A
-    R_X86_64_PLT32      = 4,  // word32 L + A - P
-    R_X86_64_COPY       = 5,  // none none
-    R_X86_64_GLOB_DAT   = 6,  // wordclass S
-    R_X86_64_JUMP_SLOT  = 7,  // wordclass S
-    R_X86_64_RELATIVE   = 8,  // wordclass B + A
-    R_X86_64_GOTPCREL   = 9,  // word32 G + GOT + A - P
-    R_X86_64_32         = 10, // word32 S + A
-    R_X86_64_32S        = 11, // word32 S + A
-    R_X86_64_16         = 12, // word16 S + A
-    R_X86_64_PC16       = 13, // word16 S + A - P
-    R_X86_64_8          = 14, // word8 S + A
-    R_X86_64_PC8        = 15, // word8 S + A - P
-
+    R_X86_64_NONE = 0,      // none none
+    R_X86_64_64 = 1,        // word64 S + A
+    R_X86_64_PC32 = 2,      // word32 S + A - P
+    R_X86_64_GOT32 = 3,     // word32 G + A
+    R_X86_64_PLT32 = 4,     // word32 L + A - P
+    R_X86_64_COPY = 5,      // none none
+    R_X86_64_GLOB_DAT = 6,  // wordclass S
+    R_X86_64_JUMP_SLOT = 7, // wordclass S
+    R_X86_64_RELATIVE = 8,  // wordclass B + A
+    R_X86_64_GOTPCREL = 9,  // word32 G + GOT + A - P
+    R_X86_64_32 = 10,       // word32 S + A
+    R_X86_64_32S = 11,      // word32 S + A
+    R_X86_64_16 = 12,       // word16 S + A
+    R_X86_64_PC16 = 13,     // word16 S + A - P
+    R_X86_64_8 = 14,        // word8 S + A
+    R_X86_64_PC8 = 15,      // word8 S + A - P
 
     /// ID of module containing symbol
-    R_X86_64_DTPMOD64   = 16, // word64
+    R_X86_64_DTPMOD64 = 16, // word64
     /// Offset in TLS Block
-    R_X86_64_DTPOFF64   = 17, // word64
+    R_X86_64_DTPOFF64 = 17, // word64
     /// Offset in initial TLS Block
-    R_X86_64_TPOFF64    = 18, // word64
+    R_X86_64_TPOFF64 = 18, // word64
     /// PC Relative address to GD GOT block
-    R_X86_64_TLSGD      = 19, // word32
+    R_X86_64_TLSGD = 19, // word32
     /// PC Relative address to LD GOT block
-    R_X86_64_TLSLD      = 20, // word32
+    R_X86_64_TLSLD = 20, // word32
     /// Offset in TLS Block
-    R_X86_64_DTPOFF32   = 21, // word32
+    R_X86_64_DTPOFF32 = 21, // word32
     /// PC Relative offset to IE GOT entry
-    R_X86_64_GOTTPOFF   = 22, // word32
+    R_X86_64_GOTTPOFF = 22, // word32
     /// offset in initial TLS entry
-    R_X86_64_TPOFF32    = 23, // word32
+    R_X86_64_TPOFF32 = 23, // word32
 
-    R_X86_64_PC64       = 24, // word64 S + A - P
-    R_X86_64_GOTOFF64   = 25, // word64 S + A - GOT
-    R_X86_64_GOTPC32    = 26, // word32 GOT + A - P
-    R_X86_64_SIZE32     = 32, // word32 Z + A
-    R_X86_64_SIZE64     = 33, // word64 Z + A
-    R_X86_64_GOTPC32_TLSDESC    = 34, // word32
-    R_X86_64_TLSDESC_CALL       = 35, // none
-    R_X86_64_TLSDESC    = 36, // word64×2
-    R_X86_64_IRELATIVE  = 37, // wordclass indirect (B + A)
-    R_X86_64_RELATIVE64 = 38, // word64 B + A
-
+    R_X86_64_PC64 = 24,            // word64 S + A - P
+    R_X86_64_GOTOFF64 = 25,        // word64 S + A - GOT
+    R_X86_64_GOTPC32 = 26,         // word32 GOT + A - P
+    R_X86_64_SIZE32 = 32,          // word32 Z + A
+    R_X86_64_SIZE64 = 33,          // word64 Z + A
+    R_X86_64_GOTPC32_TLSDESC = 34, // word32
+    R_X86_64_TLSDESC_CALL = 35,    // none
+    R_X86_64_TLSDESC = 36,         // word64×2
+    R_X86_64_IRELATIVE = 37,       // wordclass indirect (B + A)
+    R_X86_64_RELATIVE64 = 38,      // word64 B + A
 
     //hopefully these are ok to be treated as R_X86_64_GOTPCREL
-    R_X86_64_GOTPCRELX  = 41, // word32 G + GOT + A - P
+    R_X86_64_GOTPCRELX = 41,     // word32 G + GOT + A - P
     R_X86_64_REX_GOTPCRELX = 42, //word32 G + GOT + A - P
 }
-impl Default for RelocationType{
-    fn default() -> Self {RelocationType::R_X86_64_NONE}
+impl Default for RelocationType {
+    fn default() -> Self {
+        RelocationType::R_X86_64_NONE
+    }
 }
 
 #[derive(Default, Debug, Clone)]
 pub struct Relocation {
-    pub addr:   u64,
-    pub sym:    u32,
-    pub rtype:  RelocationType,
+    pub addr: u64,
+    pub sym: u32,
+    pub rtype: RelocationType,
     pub addend: i64,
 }
 
 impl Relocation {
-
     pub fn entsize(eh: &Header) -> usize {
         match eh.machine {
             types::Machine::X86_64 => 3 * 8,
-            _ => 0
+            _ => 0,
         }
     }
 
-    pub fn from_reader<R>(mut io: R, _: Option<&SectionContent>, eh: &Header) -> Result<SectionContent, Error> where R: Read{
+    pub fn from_reader<R>(
+        mut io: R,
+        _: Option<&SectionContent>,
+        eh: &Header,
+    ) -> Result<SectionContent, Error>
+    where
+        R: Read,
+    {
         if eh.machine != types::Machine::X86_64 {
-            return Err(Error::UnsupportedMachineTypeForRelocation(eh.machine.clone()));
+            return Err(Error::UnsupportedMachineTypeForRelocation(
+                eh.machine.clone(),
+            ));
         }
 
         let mut r = Vec::new();
@@ -114,20 +122,23 @@ impl Relocation {
                 _ => break,
             };
 
-            let sym   = (info >> 32) as u32;
+            let sym = (info >> 32) as u32;
             let rtype = (info & 0xffffffff) as u32;
             let rtype = match RelocationType::from_u32(rtype) {
                 Some(v) => v,
                 None => {
-                    println!("warning: unknown relocation type {} skipped while reading", rtype);
+                    println!(
+                        "warning: unknown relocation type {} skipped while reading",
+                        rtype
+                    );
                     elf_read_u64!(eh, io)?;
-                    continue
-                },
+                    continue;
+                }
             };
 
-            let addend  = elf_read_u64!(eh, io)?;
+            let addend = elf_read_u64!(eh, io)?;
 
-            r.push(Relocation{
+            r.push(Relocation {
                 addr: addr,
                 sym: sym,
                 rtype: rtype,
@@ -138,16 +149,22 @@ impl Relocation {
         Ok(SectionContent::Relocations(r))
     }
 
-    pub fn to_writer<W>(&self, mut io: W, _: Option<&mut SectionContent>, eh: &Header)
-        -> Result<(), Error> where W: Write {
+    pub fn to_writer<W>(
+        &self,
+        mut io: W,
+        _: Option<&mut SectionContent>,
+        eh: &Header,
+    ) -> Result<(), Error>
+    where
+        W: Write,
+    {
+        elf_write_u64!(eh, io, self.addr)?;
 
-            elf_write_u64!(eh, io, self.addr)?;
+        let info = (self.sym.to_u64().unwrap() << 32) + self.rtype.to_u64().unwrap();
+        elf_write_u64!(eh, io, info)?;
 
-            let info = (self.sym.to_u64().unwrap() << 32) + self.rtype.to_u64().unwrap();
-            elf_write_u64!(eh, io, info)?;
+        elf_write_u64!(eh, io, self.addend as u64)?;
 
-            elf_write_u64!(eh, io, self.addend as u64)?;
-
-            Ok(())
-        }
+        Ok(())
+    }
 }

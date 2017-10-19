@@ -6,40 +6,42 @@ use symbol::Symbol;
 use strtab::Strtab;
 use types;
 
-use std::io::{Read, Write, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::io::BufWriter;
 
 #[derive(Default, Debug, Clone)]
 pub struct SectionHeader {
-    pub name:       u32,
-    pub shtype:     types::SectionType,
-    pub flags:      types::SectionFlags,
-    pub addr:       u64,
-    pub offset:     u64,
-    pub size:       u64,
-    pub link:       u32,
-    pub info:       u32,
-    pub addralign:  u64,
-    pub entsize:    u64,
+    pub name: u32,
+    pub shtype: types::SectionType,
+    pub flags: types::SectionFlags,
+    pub addr: u64,
+    pub offset: u64,
+    pub size: u64,
+    pub link: u32,
+    pub info: u32,
+    pub addralign: u64,
+    pub entsize: u64,
 }
 
 impl SectionHeader {
-
-    pub fn entsize(eh: &Header) ->  usize {
+    pub fn entsize(eh: &Header) -> usize {
         4 + 4 + match eh.ident_class {
             types::Class::Class64 => 6 * 8,
             types::Class::Class32 => 6 * 4,
         } + 4 + 4
     }
 
-    pub fn from_reader<R>(io: &mut R, eh: &Header) -> Result<SectionHeader, Error> where R: Read {
+    pub fn from_reader<R>(io: &mut R, eh: &Header) -> Result<SectionHeader, Error>
+    where
+        R: Read,
+    {
         let mut r = SectionHeader::default();
         let mut b = vec![0; eh.shentsize as usize];
         io.read_exact(&mut b)?;
         let mut br = &b[..];
-        r.name     = elf_read_u32!(eh, br)?;
+        r.name = elf_read_u32!(eh, br)?;
 
-        let reb  = elf_read_u32!(eh, br)?;
+        let reb = elf_read_u32!(eh, br)?;
         r.shtype = types::SectionType(reb);
 
         let reb = elf_read_uclass!(eh, br)?;
@@ -47,17 +49,20 @@ impl SectionHeader {
             Some(v) => v,
             None => return Err(Error::InvalidSectionFlags(reb)),
         };
-        r.addr      = elf_read_uclass!(eh, br)?;
-        r.offset    = elf_read_uclass!(eh, br)?;
-        r.size      = elf_read_uclass!(eh, br)?;
-        r.link      = elf_read_u32!(eh, br)?;
-        r.info      = elf_read_u32!(eh, br)?;
+        r.addr = elf_read_uclass!(eh, br)?;
+        r.offset = elf_read_uclass!(eh, br)?;
+        r.size = elf_read_uclass!(eh, br)?;
+        r.link = elf_read_u32!(eh, br)?;
+        r.info = elf_read_u32!(eh, br)?;
         r.addralign = elf_read_uclass!(eh, br)?;
-        r.entsize   = elf_read_uclass!(eh, br)?;
+        r.entsize = elf_read_uclass!(eh, br)?;
         Ok(r)
     }
 
-    pub fn to_writer<R>(&self, eh: &Header, io: &mut  R) -> Result<(), Error> where R: Write {
+    pub fn to_writer<R>(&self, eh: &Header, io: &mut R) -> Result<(), Error>
+    where
+        R: Write,
+    {
         let mut w = BufWriter::new(io);
         elf_write_u32!(eh, w, self.name)?;
         elf_write_u32!(eh, w, self.shtype.to_u32())?;
@@ -84,8 +89,10 @@ pub enum SectionContent {
     Strtab(Strtab),
 }
 
-impl Default for SectionContent{
-    fn default() -> Self {SectionContent::None}
+impl Default for SectionContent {
+    fn default() -> Self {
+        SectionContent::None
+    }
 }
 impl SectionContent {
     pub fn as_dynamic_mut(&mut self) -> Option<&mut Vec<Dynamic>> {
@@ -150,40 +157,51 @@ impl SectionContent {
 
 #[derive(Debug, Default, Clone)]
 pub struct Section {
-    pub header:  SectionHeader,
-    pub name:    String,
+    pub header: SectionHeader,
+    pub name: String,
     pub content: SectionContent,
 }
 
 
 impl Section {
-    pub fn size(&self, eh: &Header) -> usize { self.content.size(eh) }
-    pub fn new(name: String, shtype: types::SectionType, flags: types::SectionFlags,
-               content: SectionContent, link: u32, info: u32) -> Section {
-        Section{
+    pub fn size(&self, eh: &Header) -> usize {
+        self.content.size(eh)
+    }
+    pub fn new(
+        name: String,
+        shtype: types::SectionType,
+        flags: types::SectionFlags,
+        content: SectionContent,
+        link: u32,
+        info: u32,
+    ) -> Section {
+        Section {
             name: name,
             header: SectionHeader {
-                name:       0,
-                shtype:     shtype,
-                flags:      flags,
-                addr:       0,
-                offset:     0,
-                size:       0,
-                link:       link,
-                info:       info,
-                addralign:  0,
-                entsize:    0,
+                name: 0,
+                shtype: shtype,
+                flags: flags,
+                addr: 0,
+                offset: 0,
+                size: 0,
+                link: link,
+                info: info,
+                addralign: 0,
+                entsize: 0,
             },
             content: content,
         }
     }
 
-    pub fn sync(&mut self, eh: &Header, mut linked: Option<&mut SectionContent>)
-        -> Result<(), Error> {
+    pub fn sync(
+        &mut self,
+        eh: &Header,
+        mut linked: Option<&mut SectionContent>,
+    ) -> Result<(), Error> {
         match self.content {
             SectionContent::Relocations(ref vv) => {
-                self.header.entsize  = Relocation::entsize(eh) as u64;
-            },
+                self.header.entsize = Relocation::entsize(eh) as u64;
+            }
             SectionContent::Symbols(ref vv) => {
                 for (i, sym) in vv.iter().enumerate() {
                     if sym.bind == types::SymbolBind::GLOBAL {
@@ -192,20 +210,20 @@ impl Section {
                     }
                 }
                 for v in vv {
-                    v.sync(linked.as_mut().map(|r|&mut **r), eh)?;
+                    v.sync(linked.as_mut().map(|r| &mut **r), eh)?;
                 }
-                self.header.entsize  = Symbol::entsize(eh) as u64;
-            },
+                self.header.entsize = Symbol::entsize(eh) as u64;
+            }
             SectionContent::Dynamic(ref vv) => {
                 for v in vv {
-                    v.sync(linked.as_mut().map(|r|&mut **r), eh)?;
+                    v.sync(linked.as_mut().map(|r| &mut **r), eh)?;
                 }
-                self.header.entsize  = Dynamic::entsize(eh) as u64;
-            },
+                self.header.entsize = Dynamic::entsize(eh) as u64;
+            }
             SectionContent::Strtab(ref v) => {
-                self.header.entsize  = Strtab::entsize(eh) as u64;
-            },
-            SectionContent::None | SectionContent::Raw(_) => {},
+                self.header.entsize = Strtab::entsize(eh) as u64;
+            }
+            SectionContent::None | SectionContent::Raw(_) => {}
         }
         if self.header.shtype != types::SectionType::NOBITS {
             self.header.size = self.size(eh) as u64;
@@ -213,4 +231,3 @@ impl Section {
         Ok(())
     }
 }
-

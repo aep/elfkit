@@ -4,17 +4,17 @@ use types;
 
 pub trait ElfEndianReadExt: Read {
     fn elf_read_u16(&mut self, eh: &Header) -> Result<u16> {
-        use byteorder::{LittleEndian, BigEndian, ReadBytesExt};
+        use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
         match eh.ident_endianness {
             types::Endianness::LittleEndian => self.read_u16::<LittleEndian>(),
-            types::Endianness::BigEndian    => self.read_u16::<BigEndian>(),
+            types::Endianness::BigEndian => self.read_u16::<BigEndian>(),
         }
     }
     fn elf_read_u32(&mut self, eh: &Header) -> Result<u32> {
-        use byteorder::{LittleEndian, BigEndian, ReadBytesExt};
+        use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
         match eh.ident_endianness {
             types::Endianness::LittleEndian => self.read_u32::<LittleEndian>(),
-            types::Endianness::BigEndian    => self.read_u32::<BigEndian>(),
+            types::Endianness::BigEndian => self.read_u32::<BigEndian>(),
         }
     }
 }
