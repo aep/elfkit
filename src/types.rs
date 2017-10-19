@@ -821,6 +821,8 @@ pub enum SegmentType {
     GNU_STACK = 0x6474e551,
     /// Read-only after relocation
     GNU_RELRO = 0x6474e552,
+    /// PaX memory protection
+    PAX_FLAGS = 0x65041580,
     /// Sun Specific segment
     SUNWBSS = 0x6ffffffa,
     /// Stack segment
