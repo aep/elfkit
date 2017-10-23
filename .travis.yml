@@ -7,5 +7,5 @@ addons:
     - nasm
 script:
   - cargo build --verbose --all
-  - cd $TRAVIS_BUILD_DIR/tests/samples && make
   - cargo test
+  - cd $TRAVIS_BUILD_DIR/tests/linker/ && make test

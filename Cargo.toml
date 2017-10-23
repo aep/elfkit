@@ -11,8 +11,6 @@ description = """
 an elf parser and manipulation library in pure rust
 """
 
-
-
 [dependencies]
 byteorder = "1"
 enum-primitive-derive = "0.1"
@@ -20,8 +18,13 @@ num-traits = "^0.1"
 bitflags = "1.0.0"
 itertools = "0.6"
 
-
-[dev_dependencies]
+## bin dependencies
 colored = "1"
 goblin = "0.0.11"
+tempfile = "2.2.0"
+sha2 = "0.6"
 
+
+[[bin]]
+name="bolter"
+path="bolter/main.rs"

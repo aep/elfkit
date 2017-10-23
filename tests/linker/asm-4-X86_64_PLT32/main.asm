@@ -4,7 +4,7 @@ section .text
     global _start
 _start:
     push    rbp
-    call    hello wrt ..plt
+    call    hello WRT ..plt
     pop	    rbp
     mov     rax, 60
     mov     rdi, 10

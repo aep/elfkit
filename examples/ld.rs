@@ -21,90 +21,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use colored::*;
 
-pub fn fail(msg: String) -> ! {
-    println!("{}", msg.red());
-    panic!("abort");
-}
-
-
-fn ldarg(arg: &String, argname: &str, argc: &mut usize) -> Option<String> {
-    if arg.starts_with(argname) {
-        Some(if arg.len() < argname.len() + 1 {
-            *argc += 1;
-            env::args().nth(*argc).unwrap()
-        } else {
-            String::from(&arg[2..])
-        })
-    } else {
-        None
-    }
-}
-
-
-#[derive(Default)]
-struct LdOptions {
-    dynamic_linker: String,
-    object_paths: Vec<String>,
-    output_path: String,
-}
-
-fn search_lib(search_paths: &Vec<String>, needle: &String) -> String {
-    let so = String::from("lib") + needle + ".a";
-    for p in search_paths {
-        let pc = Path::new(p).join(&so);
-        if pc.exists() {
-            return pc.into_os_string().into_string().unwrap();
-        }
-    }
-    fail(format!(
-        "ld.elfkit: cannot find: {} in {:?}",
-        so,
-        search_paths
-    ));
-}
-
-fn parse_ld_options() -> LdOptions {
-    let mut options = LdOptions::default();
-    options.output_path = String::from("a.out");
-    let mut search_paths = Vec::new();
-
-    let mut argc = 1;
-    loop {
-        if argc >= env::args().len() {
-            break;
-        }
-
-        let arg = env::args().nth(argc).unwrap();
-        if let Some(val) = ldarg(&arg, "-L", &mut argc) {
-            search_paths.push(val);
-        } else if let Some(_) = ldarg(&arg, "-z", &mut argc) {
-            argc += 1;
-            let arg2 = env::args().nth(argc).unwrap();
-            println!("{}", format!("argument ignored: {} {}", arg, arg2).yellow());
-        } else if let Some(val) = ldarg(&arg, "-l", &mut argc) {
-            options.object_paths.push(search_lib(&search_paths, &val));
-        } else if let Some(val) = ldarg(&arg, "-m", &mut argc) {
-            if val != "elf_x86_64" {
-                fail(format!("machine not supported: {}", val));
-            }
-        } else if let Some(val) = ldarg(&arg, "-o", &mut argc) {
-            options.output_path = val;
-        } else if arg == "-pie" {
-        } else if arg == "-dynamic-linker" {
-            argc += 1;
-            options.dynamic_linker = env::args().nth(argc).unwrap()
-        } else if arg.starts_with("-") {
-            println!("{}", format!("argument ignored: {}", arg).yellow());
-        } else {
-            options.object_paths.push(arg);
-        }
-        argc += 1;
-    }
-
-    println!("linking {:?}", options.object_paths);
-
-    options
-}
 
 fn main() {
     let ldoptions = parse_ld_options();
@@ -317,6 +233,7 @@ fn main() {
                 assert!(sym.name.len() > 0);
             }
             let mut sym = sym.clone();
+
             if let SymbolSectionIndex::Global(id) = sym.shndx {
                 sym.shndx = SymbolSectionIndex::Section(global2section[&id] as u16);
                 sym.value += out_elf.sections[global2section[&id]].header.addr;
@@ -325,6 +242,9 @@ fn main() {
                 //if sym.bind == types::SymbolBind::GLOBAL {
                 sym.bind = types::SymbolBind::LOCAL;
                 //}
+            } else {
+                println!("skipping relocation against undefined {:?}", sym);
+                continue;
             }
 
             reloc.addr += out_elf.sections[global2section[&unit.global_id]]
@@ -1013,4 +933,90 @@ impl Lookup {
             _ => 0,
         }
     }
+}
+
+
+pub fn fail(msg: String) -> ! {
+    println!("{}", msg.red());
+    panic!("abort");
+}
+
+
+fn ldarg(arg: &String, argname: &str, argc: &mut usize) -> Option<String> {
+    if arg.starts_with(argname) {
+        Some(if arg.len() < argname.len() + 1 {
+            *argc += 1;
+            env::args().nth(*argc).unwrap()
+        } else {
+            String::from(&arg[2..])
+        })
+    } else {
+        None
+    }
+}
+
+
+#[derive(Default)]
+struct LdOptions {
+    dynamic_linker: String,
+    object_paths: Vec<String>,
+    output_path: String,
+}
+
+fn search_lib(search_paths: &Vec<String>, needle: &String) -> String {
+    let so = String::from("lib") + needle + ".a";
+    for p in search_paths {
+        let pc = Path::new(p).join(&so);
+        if pc.exists() {
+            return pc.into_os_string().into_string().unwrap();
+        }
+    }
+    fail(format!(
+        "ld.elfkit: cannot find: {} in {:?}",
+        so,
+        search_paths
+    ));
+}
+
+fn parse_ld_options() -> LdOptions {
+    let mut options = LdOptions::default();
+    options.output_path = String::from("a.out");
+    let mut search_paths = Vec::new();
+
+    let mut argc = 1;
+    loop {
+        if argc >= env::args().len() {
+            break;
+        }
+
+        let arg = env::args().nth(argc).unwrap();
+        if let Some(val) = ldarg(&arg, "-L", &mut argc) {
+            search_paths.push(val);
+        } else if let Some(_) = ldarg(&arg, "-z", &mut argc) {
+            argc += 1;
+            let arg2 = env::args().nth(argc).unwrap();
+            println!("{}", format!("argument ignored: {} {}", arg, arg2).yellow());
+        } else if let Some(val) = ldarg(&arg, "-l", &mut argc) {
+            options.object_paths.push(search_lib(&search_paths, &val));
+        } else if let Some(val) = ldarg(&arg, "-m", &mut argc) {
+            if val != "elf_x86_64" {
+                fail(format!("machine not supported: {}", val));
+            }
+        } else if let Some(val) = ldarg(&arg, "-o", &mut argc) {
+            options.output_path = val;
+        } else if arg == "-pie" {
+        } else if arg == "-dynamic-linker" {
+            argc += 1;
+            options.dynamic_linker = env::args().nth(argc).unwrap()
+        } else if arg.starts_with("-") {
+            println!("{}", format!("argument ignored: {}", arg).yellow());
+        } else {
+            options.object_paths.push(arg);
+        }
+        argc += 1;
+    }
+
+    println!("linking {:?}", options.object_paths);
+
+    options
 }
