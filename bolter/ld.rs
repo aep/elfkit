@@ -292,6 +292,12 @@ impl Lookup {
         self.units.push(unit);
     }
 
+    pub fn reindex(&mut self) {
+        self.by_id.clear();
+        for (i,unit) in self.units.iter().enumerate() {
+            self.by_id.insert(unit.global_id.clone(), i);
+        }
+    }
 
     fn symbol_lookup_priority(s1: &Symbol, s2: &Symbol) -> usize {
 

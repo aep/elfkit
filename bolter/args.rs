@@ -42,7 +42,6 @@ fn ldarg(arg: &String, argname: &str, argc: &mut usize) -> Option<String> {
 pub fn parse_ld_options() -> LdOptions{
     let mut options         = LdOptions::default();
     options.output_path     = String::from("a.out");
-    options.dynamic_linker  = String::from("/lib64/ld-linux-x86-64.so.2");
     let mut search_paths    = Vec::new();
 
     let mut argc = 1;
