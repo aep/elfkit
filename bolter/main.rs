@@ -275,7 +275,7 @@ fn main() {
                     fail(format!("unsupported relocation. maybe missing -fPIC ? {:?}", reloc));
                 },
                 _ => {
-                    fail(format!("unsupported relocation {:?}", reloc));
+                    fail(format!("unsupported relocation {:?} to {:?}", reloc, sym));
                 },
             }
         }
