@@ -2,8 +2,9 @@ use std::io::{Read, Write};
 use {Error, Header, SectionContent};
 use types;
 use num_traits::{FromPrimitive, ToPrimitive};
+use symbol::Symbol;
 
-/**
+/*
 A Represents the addend used to compute the value of the relocatable field.
 
 B Represents the base address at which a shared object has been loaded into memory
@@ -46,20 +47,45 @@ pub enum RelocationType {
     R_X86_64_8 = 14,        // word8 S + A
     R_X86_64_PC8 = 15,      // word8 S + A - P
 
-    /// ID of module containing symbol
+    /// First part of the tls_index structure: ID of module containing symbol
+    /// writes the module id at this location
+    /// in an executable this is always exactly 1,
+    /// so this reloc is only emitted for DYN where the dynamic linker
+    /// needs to give the module an id
     R_X86_64_DTPMOD64 = 16, // word64
-    /// Offset in TLS Block
+
+    /// Second part of tls_index: The Offset of the symbol in the TLS Block
+    /// this is written into the GOT of _this_ unit by the dynamic linker,
+    /// and the offset is into the TLS block of some other unit that actually
+    /// defines that symbol
     R_X86_64_DTPOFF64 = 17, // word64
-    /// Offset in initial TLS Block
+
+    /// Offset in initial TLS Block in initial exec model
+    /// no idea why this needs a different reloc type, this appears to be identical
+    /// to R_X86_64_DTPOFF64
     R_X86_64_TPOFF64 = 18, // word64
-    /// PC Relative address to GD GOT block
+
+    /// PC Relative address to the tls_index structure in the GOT
+    /// in general dynamic model
     R_X86_64_TLSGD = 19, // word32
-    /// PC Relative address to LD GOT block
+
+    /// PC Relative address to the tls_index structure in the GOT
+    /// in local dynamic model
+    /// the local dynamic model seems even more drepperesque and i haven't seen
+    /// it used yet
     R_X86_64_TLSLD = 20, // word32
-    /// Offset in TLS Block
+
+    /// Offset of the symbol in TLS Block (local dynamic model)
     R_X86_64_DTPOFF32 = 21, // word32
-    /// PC Relative offset to IE GOT entry
+
+
+    /// PC Relative offset of symbol in GOT in initial exec model
+    /// drepper says this is emitted by the linker, and processed by the dynamic linker
+    /// but that doesnt make any sense, since the initial exec model assumes
+    /// that everything is in the same object anyway, so the linker knows the offset.
+    /// more likely this is emitted by the compiler.
     R_X86_64_GOTTPOFF = 22, // word32
+
     /// offset in initial TLS entry
     R_X86_64_TPOFF32 = 23, // word32
 
@@ -96,7 +122,7 @@ impl Relocation {
     pub fn entsize(eh: &Header) -> usize {
         match eh.machine {
             types::Machine::X86_64 => 3 * 8,
-            _ => 0,
+            _ => panic!("relocs for machine '{:?}' not implemented", eh.machine),
         }
     }
 
@@ -152,9 +178,8 @@ impl Relocation {
     pub fn to_writer<W>(
         &self,
         mut io: W,
-        _: Option<&mut SectionContent>,
         eh: &Header,
-    ) -> Result<(), Error>
+    ) -> Result<(usize), Error>
     where
         W: Write,
     {
@@ -165,6 +190,6 @@ impl Relocation {
 
         elf_write_u64!(eh, io, self.addend as u64)?;
 
-        Ok(())
+        Ok((8+8+8))
     }
 }

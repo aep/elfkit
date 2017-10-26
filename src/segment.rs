@@ -31,11 +31,7 @@ impl SegmentHeader {
         R: Read,
     {
         let mut r = SegmentHeader::default();
-        let mut b = vec![0; eh.phentsize as usize];
-        io.read_exact(&mut b)?;
-        let mut br = &b[..];
-
-        let reb = elf_read_u32!(eh, br)?;
+        let reb = elf_read_u32!(eh, io)?;
         r.phtype = match types::SegmentType::from_u32(reb) {
             Some(v) => v,
             None => return Err(Error::InvalidSegmentType(reb)),
@@ -43,22 +39,22 @@ impl SegmentHeader {
 
         match eh.ident_class {
             types::Class::Class64 => {
-                r.flags = types::SegmentFlags::from_bits_truncate(elf_read_u32!(eh, br)? as u64);
-                r.offset = elf_read_u64!(eh, br)?;
-                r.vaddr = elf_read_u64!(eh, br)?;
-                r.paddr = elf_read_u64!(eh, br)?;
-                r.filesz = elf_read_u64!(eh, br)?;
-                r.memsz = elf_read_u64!(eh, br)?;
-                r.align = elf_read_u64!(eh, br)?;
+                r.flags = types::SegmentFlags::from_bits_truncate(elf_read_u32!(eh, io)? as u64);
+                r.offset = elf_read_u64!(eh, io)?;
+                r.vaddr = elf_read_u64!(eh, io)?;
+                r.paddr = elf_read_u64!(eh, io)?;
+                r.filesz = elf_read_u64!(eh, io)?;
+                r.memsz = elf_read_u64!(eh, io)?;
+                r.align = elf_read_u64!(eh, io)?;
             }
             types::Class::Class32 => {
-                r.offset = elf_read_u32!(eh, br)? as u64;
-                r.vaddr = elf_read_u32!(eh, br)? as u64;
-                r.paddr = elf_read_u32!(eh, br)? as u64;
-                r.filesz = elf_read_u32!(eh, br)? as u64;
-                r.memsz = elf_read_u32!(eh, br)? as u64;
-                r.flags = types::SegmentFlags::from_bits_truncate(elf_read_u32!(eh, br)? as u64);
-                r.align = elf_read_u32!(eh, br)? as u64;
+                r.offset = elf_read_u32!(eh, io)? as u64;
+                r.vaddr = elf_read_u32!(eh, io)? as u64;
+                r.paddr = elf_read_u32!(eh, io)? as u64;
+                r.filesz = elf_read_u32!(eh, io)? as u64;
+                r.memsz = elf_read_u32!(eh, io)? as u64;
+                r.flags = types::SegmentFlags::from_bits_truncate(elf_read_u32!(eh, io)? as u64);
+                r.align = elf_read_u32!(eh, io)? as u64;
             }
         };
         Ok(r)

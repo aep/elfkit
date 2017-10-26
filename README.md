@@ -24,7 +24,18 @@ there's also a prettier version of readelf showing of parsing capabilities
 cargo run --example readelf ./tests/samples/amd64_exe
 ```
 
-![screenshot](/examples/readelf-screenshot.png?raw=true)
+![screenshot](/bin/readelf-screenshot.png?raw=true)
+
+
+modular linker toolkit
+---------------------
+
+Loader: loads elf objects from disk
+Linker: produces a link graph of sections from a loader
+Layout: bakes multiple sections into a single object
+
+
+
 
 
 implementation status

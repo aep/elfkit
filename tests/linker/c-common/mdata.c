@@ -1,0 +1,1 @@
+char *hello ="derp";

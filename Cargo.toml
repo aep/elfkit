@@ -17,14 +17,39 @@ enum-primitive-derive = "0.1"
 num-traits = "^0.1"
 bitflags = "1.0.0"
 itertools = "0.6"
+rayon = "0.8.2"
+bit-vec = "0.4.4"
+bloom = "0.3.2"
+fnv = "1.0.5"
+ordermap = "0.3.0"
+
+
+#ar = "0.3.1"
+ar = {git = "https://github.com/mdsteele/rust-ar.git"}
+
 
 ## bin dependencies
 colored = "1"
-goblin = "0.0.11"
 tempfile = "2.2.0"
 sha2 = "0.6"
 
 
 [[bin]]
-name="bolter"
-path="bolter/main.rs"
+name="readelf"
+path="bin/readelf.rs"
+
+#[[bin]]
+#name="findsym"
+#path="bin/findsym.rs"
+#
+#[[bin]]
+#name="linktree"
+#path="bin/linktree.rs"
+
+[[bin]]
+name="ld"
+path="bin/ld.rs"
+
+#[[bin]]
+#name="bolter"
+#path="bolter/main.rs"
