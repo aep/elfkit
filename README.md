@@ -10,12 +10,14 @@ an elf read and manipulation library in pure rust (written from scratch, no bfd,
 intended to be used in binary manipulation utils such as strip, chrpath, objcopy and ld.
 The end goal is to build a well designed library that facilitates drop-in replacements for gnu ld.
 
-currently elfkit's ld can only link asm and C code with clang and musl libc
+currently elfkit's ld can only link asm and C code with musl libc
 
 ```
-cargo build --release --example ld
-ln -s $PWD/target/release/examples/ld /usr/bin/ld.elfkit
-musl-clang -fuse-ld=elfkit tests/samples/main_c.c
+cargo build --release --bin ld
+ln -s $PWD/target/release/ld /usr/local/bin/ld.gold
+#ensure /usr/local/bin/ld.gold shows up in PATH first, otherwise use a different directory
+which ld.gold
+musl-gcc -fuse-ld=gold main.c
 ```
 
 there's also a prettier version of readelf showing of parsing capabilities
