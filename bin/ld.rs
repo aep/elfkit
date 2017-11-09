@@ -186,12 +186,11 @@ impl DynamicRelocator {
 
         let got = elf.sections[shndx_got].header.addr;
         let mut got_used = 0;
+        let mut sym_to_got = HashMap::new();
 
         for relocsec in relasecs {
             elf.sections[relocsec.header.info as usize].addrlock = true;
             let secaddr = elf.sections[relocsec.header.info as usize].header.addr;
-
-            //FIXME COM symbols aren't emitted into GOT
 
             for mut reloc in relocsec.content.into_relocations().unwrap().into_iter() {
                 let mut sym = {
@@ -216,8 +215,9 @@ impl DynamicRelocator {
 
                 match reloc.rtype {
                     relocation::RelocationType::R_X86_64_64 => {
-                        reloc.sym  = 0;
-                        reloc.addr += secaddr;
+                        reloc.rtype   = relocation::RelocationType::R_X86_64_RELATIVE;
+                        reloc.sym     = 0;
+                        reloc.addr   += secaddr;
                         reloc.addend += sym.value as i64;
                         dynrel.push(reloc);
                     },
@@ -250,26 +250,29 @@ impl DynamicRelocator {
                     relocation::RelocationType::R_X86_64_GOTPCREL |
                         relocation::RelocationType::R_X86_64_GOTPCRELX |
                         relocation::RelocationType::R_X86_64_REX_GOTPCRELX => {
-                        let got_slot = got + got_used;
-                        got_used += 8;
-
-                        elf.sections[relocsec.header.link as usize].content.as_symbols_mut().unwrap()
-                            .push(symbol::Symbol{
-                                shndx:  symbol::SymbolSectionIndex::Section(shndx_got as u16),
-                                value:  got_slot,
-                                size:   8,
-                                name:   [&sym.name[..], b"__GOT"].concat(),
-                                stype:  types::SymbolType::OBJECT,
-                                bind:   types::SymbolBind::GLOBAL,
-                                vis:    types::SymbolVis::DEFAULT,
-                                _name:  0,
+                    
+                        let shndx_this_symtab = relocsec.header.link as usize;
+                        let got_slot = *sym_to_got.entry(reloc.sym).or_insert_with(||{
+                            let got_slot = got + got_used;
+                            got_used += 8;
+                            elf.sections[shndx_this_symtab].content.as_symbols_mut().unwrap()
+                                .push(symbol::Symbol{
+                                    shndx:  symbol::SymbolSectionIndex::Section(shndx_got as u16),
+                                    value:  got_slot,
+                                    size:   8,
+                                    name:   [&sym.name[..], b"__GOT"].concat(),
+                                    stype:  types::SymbolType::OBJECT,
+                                    bind:   types::SymbolBind::GLOBAL,
+                                    vis:    types::SymbolVis::DEFAULT,
+                                    _name:  0,
+                                });
+                            dynrel.push(relocation::Relocation{
+                                addr:   got_slot,
+                                sym:    0,
+                                rtype:  relocation::RelocationType::R_X86_64_RELATIVE,
+                                addend: sym.value as i64,
                             });
-
-                        dynrel.push(relocation::Relocation{
-                            addr:   got_slot,
-                            sym:    0,
-                            rtype:  relocation::RelocationType::R_X86_64_64,
-                            addend: sym.value as i64,
+                            got_slot
                         });
 
                         let vaddr = elf.sections[relocsec.header.info as usize].header.addr + reloc.addr;
@@ -391,14 +394,11 @@ impl DynamicRelocator {
                         padding.push(dynamic::Dynamic::default());
                     }
 
-                    if first_non_rela < sec.content.as_relocations().unwrap().len() as u64 {
-                        r.push(dynamic::Dynamic {
-                            dhtype: types::DynamicType::TEXTREL,
-                            content: dynamic::DynamicContent::Address(first_non_rela),
-                        });
-                    } else {
-                        padding.push(dynamic::Dynamic::default());
-                    }
+                    //TODO
+                    r.push(dynamic::Dynamic {
+                        dhtype: types::DynamicType::TEXTREL,
+                        content: dynamic::DynamicContent::Address(0),
+                    });
                 }
                 _ => {}
             }
@@ -640,6 +640,8 @@ pub fn parse_ld_options() -> LdOptions{
     options.output_path     = String::from("a.out");
     let mut search_paths    = Vec::new();
 
+    println!("arguments to ld.elfkit: {:?}", env::args());
+
     let mut argc = 1;
     loop {
         if argc >= env::args().len() {
@@ -649,6 +651,7 @@ pub fn parse_ld_options() -> LdOptions{
         let arg = env::args().nth(argc).unwrap();
         if let Some(val) = ldarg(&arg, "-L", &mut argc) {
             search_paths.push(val);
+        } else if let Some(val) = ldarg(&arg, "-z", &mut argc) {
         } else if let Some(val) = ldarg(&arg, "-z", &mut argc) {
             argc += 1;
             let arg2 = env::args().nth(argc).unwrap();
