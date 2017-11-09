@@ -10,20 +10,20 @@ all: $(OUTPUTS)
 clean:
 	rm -f $(OUTPUTS)
 
-CFLAGS=-fPIC
-LDFLAGS=-pie -dynamic-linker /lib64/ld-linux-x86-64.so.2
+CFLAGS=-fPIC -g
+LDFLAGS=--emit-relocs -pie -dynamic-linker /lib64/ld-linux-x86-64.so.2
 
 
 %.o: %.asm
-	nasm -f elf64 -o $@ $^
+	nasm -g -f elf64 -o $@ $^
 
 ld.out: $(INPUTS)
-	ld -o $@ $(LDFLAGS) $^
+	ld -g -o $@ $(LDFLAGS) $^
 
 ek.out: $(INPUTS)
-	cargo run --bin bolter  -- -o $@ -pie $^
+	cargo run --bin ld -- -o $@ $(LDFLAGS) $^
 
 .PHONY: test
 test: all
-	test "$$(./ld.out)" = "$$(./ek.out)"
+	test "$$(./ld.out)" = "$$(./ek.out)" && echo PASS
 

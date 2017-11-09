@@ -21,7 +21,7 @@ fn main() {
     let filename = env::args().nth(1).unwrap();
     let mut file = File::open(filename).unwrap();
     let mut elf = Elf::from_reader(&mut file).unwrap();
-    elf.load_all().unwrap();
+    elf.load_all(&mut file).unwrap();
 
     println!("{}", "ELF Header:".bold());
     println!(
@@ -102,15 +102,15 @@ fn main() {
         elf.header.shoff
     );
     println!(
-        "  [Nr] Name                     Type           Address          Offset   Size     EntS \
+        "  [Nr] Name             Type           Address          Offset   Size     EntS \
          Flg Lnk Inf Al"
     );
 
     for (i, section) in elf.sections.iter().enumerate() {
         println!(
-            "  [{:>2}] {:<24.24} {} {} {} {} {} {:<3} {:<3.3} {:<3} {:<2.2}",
+            "  [{:>2}] {:<16.16} {} {} {} {} {} {:<3} {:<3.3} {:<3} {:<2.2}",
             i,
-            section.name.bold(),
+            String::from_utf8_lossy(&section.name).bold(),
             match section.header.shtype.typename(&elf.header) {
                 Some(s) => format!("{:<14.14}", s),
                 None => hextab(14, section.header.shtype.to_u32()),
@@ -180,19 +180,19 @@ fn main() {
     }
 
     println!("");
-    println!("{}:", "File Layout".bold());
+    println!("{}:", "Segment Layout".bold());
 
     let mut fls = vec![
-        ("elf header", 0, elf.header.ehsize as u64),
+        (String::from("elf header"), 0, elf.header.ehsize as u64),
         (
-            "section headers",
+            String::from("section headers"),
             elf.header.shoff,
             elf.header.shentsize as u64 * elf.header.shnum as u64,
         ),
     ];
     if elf.header.phoff > 0 {
         fls.push((
-            "segment headers",
+            String::from("segment headers"),
             elf.header.phoff,
             (elf.header.phentsize * elf.header.phnum) as u64,
         ));
@@ -203,13 +203,9 @@ fn main() {
             continue;
         }
         fls.push((
-            &section.name,
-            section.header.offset,
-            if section.header.shtype == types::SectionType::NOBITS {
-                0
-            } else {
-                section.header.size
-            },
+            String::from_utf8_lossy(&section.name).into_owned(),
+            section.header.addr,
+            section.header.size,
         ));
     }
 
@@ -217,7 +213,7 @@ fn main() {
 
     println!(
         "{}",
-        "                     offset     size     segment".bold()
+        "                     addr       size     segment".bold()
     );
     if elf.segments.len() > 0 {
         for n in 0..12 {
@@ -239,10 +235,10 @@ fn main() {
 
 
     let mut cfileoff = 0;
-    let fls_intermediate = fls.drain(..).collect::<Vec<(&str, u64, u64)>>();
+    let fls_intermediate = fls.drain(..).collect::<Vec<(String, u64, u64)>>();
     for (name, off, size) in fls_intermediate {
         if cfileoff < off {
-            fls.push(("", cfileoff, off - cfileoff));
+            fls.push((String::default(), cfileoff, off - cfileoff));
         }
         fls.push((name, off, size));
         cfileoff = off + size;
@@ -251,7 +247,7 @@ fn main() {
     if let Some(&(_, off, size)) = fls.last() {
         let filelen = file.metadata().unwrap().len();
         if off + size < filelen {
-            fls.push(("", off + size, filelen - (off + size)));
+            fls.push((String::default(), off + size, filelen - (off + size)));
         }
     }
 
@@ -265,11 +261,11 @@ fn main() {
         );
 
         for segment in elf.segments.iter() {
-            if off >= segment.offset && (off + size) <= (segment.offset + segment.filesz) {
-                if segment.flags.contains(types::SegmentFlags::EXECUTABLE) {
-                    print!("{:^3}|", format!("{}", segment.flags).green())
-                } else if segment.flags.contains(types::SegmentFlags::WRITABLE) {
+            if off >= segment.vaddr && (off + size) <= (segment.vaddr + segment.memsz) {
+                if segment.flags.contains(types::SegmentFlags::WRITABLE) {
                     print!("{:^3}|", format!("{}", segment.flags).red())
+                } else if segment.flags.contains(types::SegmentFlags::EXECUTABLE) {
+                    print!("{:^3}|", format!("{}", segment.flags).green())
                 } else {
                     print!("{:^3}|", format!("{}", segment.flags));
                 }
@@ -288,7 +284,7 @@ fn main() {
                 println!("");
                 println!(
                     "{} relocation section at offset 0x{:x}:",
-                    section.name.bold(),
+                    String::from_utf8_lossy(&section.name).bold(),
                     section.header.offset
                 );
                 println!("  Offset           Type            Symbol               Addend");
@@ -305,7 +301,7 @@ fn main() {
                         .and_then(|sec| sec.content.as_symbols())
                         .and_then(|symbols| symbols.get(reloc.sym as usize))
                         .and_then(|symbol| if symbol.name.len() > 0 {
-                            print!("{: <20.20} ", symbol.name);
+                            print!("{: <20.20} ", String::from_utf8_lossy(&symbol.name));
                             Some(())
                         } else {
                             None
@@ -328,7 +324,7 @@ fn main() {
                 println!("");
                 println!(
                     "{} symbols section at offset 0x{:x}:",
-                    section.name.bold(),
+                    String::from_utf8_lossy(&section.name).bold(),
                     section.header.offset
                 );
                 println!("  Num: Value             Size Type    Bind   Vis      Ndx Name");
@@ -347,9 +343,8 @@ fn main() {
                             SymbolSectionIndex::Absolute => String::from("ABS"),
                             SymbolSectionIndex::Common => String::from("COM"),
                             SymbolSectionIndex::Section(i) => format!("{}", i),
-                            SymbolSectionIndex::Global(i) => format!("g{}", i),
                         },
-                        symbol.name
+                        String::from_utf8_lossy(&symbol.name)
                     );
                 }
             }
@@ -357,7 +352,7 @@ fn main() {
                 println!("");
                 println!(
                     "{} dynamic linker section at offset 0x{:x}:",
-                    section.name.bold(),
+                    String::from_utf8_lossy(&section.name).bold(),
                     section.header.offset
                 );
                 println!("  Tag          Value");
@@ -368,19 +363,19 @@ fn main() {
                         format!("{:?}", dyn.dhtype),
                         match dyn.content {
                             DynamicContent::None => String::default(),
-                            DynamicContent::String(ref s) => s.clone(),
+                            DynamicContent::String(ref s) => String::from_utf8_lossy(&s.0).into_owned(),
                             DynamicContent::Address(u) => hextab(16, u),
                             DynamicContent::Flags1(v) => format!("{:?}", v),
                         }
                     );
                 }
             }
-            SectionContent::Raw(ref s) => match section.name.as_ref() {
-                ".interp" => {
+            SectionContent::Raw(ref s) => match section.name.as_slice() {
+                b".interp" => {
                     println!("");
                     println!(
                         "{} program interpreter section at offset 0x{:x}:",
-                        section.name.bold(),
+                        String::from_utf8_lossy(&section.name).bold(),
                         section.header.offset
                     );
                     println!("  {}", String::from_utf8_lossy(s));

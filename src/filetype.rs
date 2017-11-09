@@ -7,7 +7,7 @@ pub enum FileType {
 }
 
 
-pub fn filetype<T>(mut io: T) -> Result<FileType>
+pub fn filetype<T>(io: &mut T) -> Result<FileType>
 where
     T: Read + Seek,
 {

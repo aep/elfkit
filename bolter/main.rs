@@ -81,15 +81,20 @@ fn main() {
     }
 
     //--------------------- prepare bootstrap section
-    let boostrap_len = 1 + 4 + lookup.units.iter().fold(0, |acc, ref u| {
+    let boostrap_len = relocations::len_reljumpto  + lookup.units.iter().fold(0, |acc, ref u| {
         acc + u.relocations.iter().fold(0, |acc, ref reloc|{
             acc + match reloc.rtype {
-                RelocationType::R_X86_64_64 => 3 + 4 + 3 + 4,
+                RelocationType::R_X86_64_64 => relocations::len_bootstrap_abs64,
                 RelocationType::R_X86_64_GOTPCREL |
                     RelocationType::R_X86_64_GOTPCRELX |
-                    RelocationType::R_X86_64_REX_GOTPCRELX => 3 + 4 + 3 + 4 + 2 + 4 + 4,
-                RelocationType::R_X86_64_PC32 |
-                    RelocationType::R_X86_64_PLT32 => 2 + 4 + 4,
+                    RelocationType::R_X86_64_REX_GOTPCRELX =>
+                        relocations::len_bootstrap_abs64 +
+                        relocations::len_bootstrap_rel32,
+                    RelocationType::R_X86_64_PC32 |
+                    RelocationType::R_X86_64_PLT32 => relocations::len_bootstrap_rel32,
+                RelocationType::R_X86_64_TLSGD => relocations::len_bootstrap_val64 +
+                    relocations::len_bootstrap_abs64 +
+                    relocations::len_bootstrap_rel32,
                 _ => 0,
             }
         })
@@ -123,6 +128,8 @@ fn main() {
     let mut vaddr       = out_elf.sections[sh_index_bootstrap].header.addr +
         out_elf.sections[sh_index_bootstrap].header.size;
     let mut sc_text     = Vec::new();
+    let mut sc_data     = Vec::new();
+    let mut sc_tls      = Vec::new();
     let mut sc_bss      = 0;
     let mut unit_addresses = HashMap::new();
 
@@ -133,16 +140,28 @@ fn main() {
 
     for unit in &mut lookup.units {
         match unit.segment {
-            UnitSegment::Executable | UnitSegment::Data => {
+            UnitSegment::Executable => {
                 sc_relink.push(sc_text.len() as u32);
                 unit_addresses.insert(unit.global_id, vaddr);
                 vaddr      += unit.code.len() as u64;
                 sc_text.append(&mut unit.code);
             },
+            UnitSegment::Data => {
+                sc_relink.push(sc_data.len() as u32);
+                unit_addresses.insert(unit.global_id, vaddr);
+                vaddr      += unit.code.len() as u64;
+                sc_data.append(&mut unit.code);
+            },
             UnitSegment::Bss => {
                 unit_addresses.insert(unit.global_id, vaddr);
                 vaddr      += unit.code.len() as u64;
                 sc_bss     += unit.code.len() as u64;
+            },
+            UnitSegment::Tls => {
+                sc_relink.push(sc_tls.len() as u32);
+                unit_addresses.insert(unit.global_id, vaddr);
+                vaddr      += unit.code.len() as u64;
+                sc_tls.append(&mut unit.code);
             }
         }
     }
@@ -152,6 +171,12 @@ fn main() {
     types::SectionType::PROGBITS,
     types::SectionFlags::ALLOC | types::SectionFlags::WRITE | types::SectionFlags::EXECINSTR,
     SectionContent::Raw(sc_text), 0, 0));
+
+    let sh_index_data = out_elf.sections.len();
+    out_elf.sections.push(Section::new(String::from(".xo.data"),
+    types::SectionType::PROGBITS,
+    types::SectionFlags::ALLOC | types::SectionFlags::WRITE,
+    SectionContent::Raw(sc_data), 0, 0));
 
     let sh_index_bss = out_elf.sections.len();
     if sc_bss > 0 {
@@ -163,27 +188,52 @@ fn main() {
         out_elf.sections.push(bss);
     }
 
+    let sh_index_tls = out_elf.sections.len();
+    if sc_tls.len() > 0 {
+        let mut tls = Section::new(String::from(".xo.tdata"),
+        types::SectionType::PROGBITS,
+        types::SectionFlags::ALLOC | types::SectionFlags::WRITE | types::SectionFlags::TLS,
+        SectionContent::Raw(sc_tls), 0, 0);
+        out_elf.sections.push(tls);
+    }
+
     //reposition all the symbols
     for sym in &mut lookup.symbols {
         if let SymbolSectionIndex::Global(id) = sym.shndx {
             let unit = &lookup.units[lookup.by_id[&id]];
                 sym.shndx = SymbolSectionIndex::Section(match unit.segment {
-                    UnitSegment::Executable | UnitSegment::Data => {
-                        sh_index_text
-                    },
-                    UnitSegment::Bss => {
-                        sh_index_bss
-                    }
+                    UnitSegment::Executable => sh_index_text,
+                    UnitSegment::Data       => sh_index_data,
+                    UnitSegment::Bss        => sh_index_bss,
+                    UnitSegment::Tls        => sh_index_tls,
                 } as u16);
                 sym.value += unit_addresses[&unit.global_id];
         }
     }
     out_elf.header.entry = lookup.get_by_name("_start").unwrap().value;
 
+    //symtab
+    for unit in &lookup.units {
+        for mut sym in unit.symbols.iter().cloned() {
+            if let SymbolSectionIndex::Global(id) = sym.shndx {
+                let unit = &lookup.units[lookup.by_id[&id]];
+                sym.shndx = SymbolSectionIndex::Section(match unit.segment {
+                    UnitSegment::Executable => sh_index_text,
+                    UnitSegment::Data       => sh_index_data,
+                    UnitSegment::Bss        => sh_index_bss,
+                    UnitSegment::Tls        => sh_index_tls,
+                } as u16);
+                sym.value += unit_addresses[&unit.global_id];
+            }
+            sc_symtab.push(sym);
+        }
+    }
+
     //----------------------------------relocate
     let mut bootstrap : Vec<u8> = Vec::new();
     let mut got_used : u64 = 0;
 
+    //TODO: we emit a GOT for every reloc, although some relocs point to the same symbol
     for mut unit in std::mem::replace(&mut lookup.units, Vec::new()) {
         for mut reloc in unit.relocations {
             let mut sym = &unit.symbols[reloc.sym as usize];
@@ -240,7 +290,11 @@ fn main() {
                                           );
                 },
                 RelocationType::R_X86_64_GOTPCREL | RelocationType::R_X86_64_GOTPCRELX | RelocationType::R_X86_64_REX_GOTPCRELX => {
+
                     let got_slot = vaddr;
+                    vaddr += 8;
+                    out_elf.sections[sh_index_bss].header.size += 8;
+
                     write_bootstrap_rel32(&out_elf.header,
                                           out_elf.sections[sh_index_bootstrap].header.addr,
                                           &mut bootstrap,
@@ -259,8 +313,6 @@ fn main() {
                         vis:    types::SymbolVis::DEFAULT,
                     });
 
-                    vaddr += 8;
-                    out_elf.sections[sh_index_bss].header.size += 8;
 
                     write_bootstrap_abs64(&out_elf.header,
                                           out_elf.sections[sh_index_bootstrap].header.addr,
@@ -274,6 +326,47 @@ fn main() {
                 RelocationType::R_X86_64_32 | RelocationType::R_X86_64_32S => {
                     fail(format!("unsupported relocation. maybe missing -fPIC ? {:?}", reloc));
                 },
+
+                // this is the "general model"
+                RelocationType:: R_X86_64_TLSGD => {
+
+                    let got_slot_mod = vaddr;
+                    let got_slot_off = vaddr + 8;
+                    vaddr += 16;
+                    out_elf.sections[sh_index_bss].header.size += 16;
+
+                    write_bootstrap_val64(&out_elf.header,
+                                          out_elf.sections[sh_index_bootstrap].header.addr,
+                                          &mut bootstrap,
+                                          1, //module is always 1,
+                                          got_slot_mod,
+                                          );
+
+                    write_bootstrap_abs64(&out_elf.header,
+                                          out_elf.sections[sh_index_bootstrap].header.addr,
+                                          &mut bootstrap,
+                                          sym_addr,
+                                          got_slot_off,
+                                          );
+                    //this is is only really used for debugging
+                    sc_symtab.push(Symbol{
+                        shndx:  SymbolSectionIndex::Section(sh_index_bss  as u16),
+                        value:  got_slot_mod,
+                        size:   8,
+                        name:   sym.name.clone() + "__TLSGD",
+                        stype:  types::SymbolType::OBJECT,
+                        bind:   types::SymbolBind::LOCAL,
+                        vis:    types::SymbolVis::DEFAULT,
+                    });
+
+                    write_bootstrap_rel32(&out_elf.header,
+                                          out_elf.sections[sh_index_bootstrap].header.addr,
+                                          &mut bootstrap,
+                                          (got_slot_mod as i64 + reloc.addend) as u64,
+                                          reloc.addr,
+                                          );
+
+                },
                 _ => {
                     fail(format!("unsupported relocation {:?} to {:?}", reloc, sym));
                 },
@@ -281,7 +374,7 @@ fn main() {
         }
     }
 
-    sc_symtab.append(&mut lookup.symbols);
+    //sc_symtab.append(&mut lookup.symbols);
 
     //indirect _start via __blt_bootstrap
     write_reljumpto(&out_elf.header,
@@ -306,7 +399,6 @@ fn main() {
     types::SectionFlags::ALLOC,
     SectionContent::Strtab(Strtab::default()), 0,0));
 
-    out_elf.sync_all().unwrap();
     linker::relayout(&mut out_elf, 0x300).unwrap();
 
     sc_dynamic.extend(linker::dynamic(&out_elf).unwrap());

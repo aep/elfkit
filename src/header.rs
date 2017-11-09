@@ -3,29 +3,30 @@ use std::io::{Read, Write};
 use std::io::BufWriter;
 use error::Error;
 use types;
+use byteorder::{LittleEndian, BigEndian, ReadBytesExt};
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Header {
-    pub ident_magic: [u8; 4],
-    pub ident_class: types::Class,
-    pub ident_endianness: types::Endianness,
-    pub ident_version: u8, // 1
-    pub ident_abi: types::Abi,
-    pub ident_abiversion: u8,
+    pub ident_magic:        [u8; 4],
+    pub ident_class:        types::Class,
+    pub ident_endianness:   types::Endianness,
+    pub ident_version:      u8, // 1
+    pub ident_abi:          types::Abi,
+    pub ident_abiversion:   u8,
 
-    pub etype: types::ElfType,
-    pub machine: types::Machine,
-    pub version: u32, //1
-    pub entry: u64,   //program counter starts here
-    pub phoff: u64,   //offset of program header table
-    pub shoff: u64,   //offset of section header table
-    pub flags: types::HeaderFlags,
-    pub ehsize: u16,    //size of this header (who cares?)
-    pub phentsize: u16, //the size of a program header table entry
-    pub phnum: u16,     //the number of entries in the program header table
-    pub shentsize: u16, //the size of a section header table entry
-    pub shnum: u16,     //the number of entries in the section header table
-    pub shstrndx: u16,  //where to find section names
+    pub etype:      types::ElfType,
+    pub machine:    types::Machine,
+    pub version:    u32, //1
+    pub entry:      u64, //program counter starts here
+    pub phoff:      u64, //offset of program header table
+    pub shoff:      u64, //offset of section header table
+    pub flags:      types::HeaderFlags,
+    pub ehsize:     u16, //size of this header (who cares?)
+    pub phentsize:  u16, //the size of a program header table entry
+    pub phnum:      u16, //the number of entries in the program header table
+    pub shentsize:  u16, //the size of a section header table entry
+    pub shnum:      u16, //the number of entries in the section header table
+    pub shstrndx:   u16, //where to find section names
 }
 
 impl Default for Header {
@@ -35,21 +36,21 @@ impl Default for Header {
             ident_class: types::Class::Class64,
             ident_endianness: types::Endianness::LittleEndian,
             ident_version: 1,
-            ident_abi: types::Abi::SYSV,
+            ident_abi:  types::Abi::SYSV,
             ident_abiversion: 0,
-            etype: types::ElfType::default(),
-            machine: types::Machine::default(),
-            version: 1,
-            entry: 0,
-            phoff: 0,
-            shoff: 0,
-            flags: types::HeaderFlags::default(),
-            ehsize: 0,
-            phentsize: 0,
-            phnum: 0,
-            shentsize: 0,
-            shnum: 0,
-            shstrndx: 0,
+            etype:      types::ElfType::default(),
+            machine:    types::Machine::default(),
+            version:    1,
+            entry:      0,
+            phoff:      0,
+            shoff:      0,
+            flags:      types::HeaderFlags::default(),
+            ehsize:     0,
+            phentsize:  0,
+            phnum:      0,
+            shentsize:  0,
+            shnum:      0,
+            shstrndx:   0,
         }
     }
 }
@@ -91,40 +92,46 @@ impl Header {
 
         r.ident_abiversion = b[8];
 
-        let reb = elf_read_u16!(r, io)?;
-        r.etype = match types::ElfType::from_u16(reb) {
-            Some(v) => v,
-            None => return Err(Error::InvalidElfType(reb)),
-        };
+        elf_dispatch_endianness!(r => {
 
-        let reb = elf_read_u16!(r, io)?;
-        r.machine = match types::Machine::from_u16(reb) {
-            Some(v) => v,
-            None => return Err(Error::InvalidMachineType(reb)),
-        };
+            let reb = read_u16(io)?;
+            r.etype = match types::ElfType::from_u16(reb) {
+                Some(v) => v,
+                None => return Err(Error::InvalidElfType(reb)),
+            };
 
-        r.version = elf_read_u32!(r, io)?;
-        if r.version != 1 {
-            return Err(Error::InvalidVersion(r.version));
-        }
+            let reb = read_u16(io)?;
+            r.machine = match types::Machine::from_u16(reb) {
+                Some(v) => v,
+                None => return Err(Error::InvalidMachineType(reb)),
+            };
 
-        r.entry = elf_read_uclass!(r, io)?;
-        r.phoff = elf_read_uclass!(r, io)?;
-        r.shoff = elf_read_uclass!(r, io)?;
+            r.version = read_u32(io)?;
+            if r.version != 1 {
+                return Err(Error::InvalidVersion(r.version));
+            }
 
-        let reb = elf_read_u32!(r, io)?;
-        r.flags = types::HeaderFlags::from_bits_truncate(reb);
-        //r.flags = match types::HeaderFlags::from_bits(reb) {
-        //    Some(v) => v,
-        //    None => return Err(Error::InvalidHeaderFlags(reb)),
-        //};
 
-        r.ehsize = elf_read_u16!(r, io)?;
-        r.phentsize = elf_read_u16!(r, io)?;
-        r.phnum = elf_read_u16!(r, io)?;
-        r.shentsize = elf_read_u16!(r, io)?;
-        r.shnum = elf_read_u16!(r, io)?;
-        r.shstrndx = elf_read_u16!(r, io)?;
+            elf_dispatch_uclass!(r => {
+                r.entry = read_uclass(io)?;
+                r.phoff = read_uclass(io)?;
+                r.shoff = read_uclass(io)?;
+            });
+
+            let reb = io.read_u32::<DispatchedEndian>()?;
+            r.flags = types::HeaderFlags::from_bits_truncate(reb);
+            //r.flags = match types::HeaderFlags::from_bits(reb) {
+            //    Some(v) => v,
+            //    None => return Err(Error::InvalidHeaderFlags(reb)),
+            //};
+
+            r.ehsize    = read_u16(io)?;
+            r.phentsize = read_u16(io)?;
+            r.phnum     = read_u16(io)?;
+            r.shentsize = read_u16(io)?;
+            r.shnum     = read_u16(io)?;
+            r.shstrndx  = read_u16(io)?;
+        });
 
         Ok(r)
     }

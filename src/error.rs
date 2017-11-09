@@ -1,4 +1,5 @@
 use types;
+use section::SectionContent;
 
 #[derive(Debug)]
 pub enum Error {
@@ -21,7 +22,10 @@ pub enum Error {
     InvalidSymbolVis(u8),
     InvalidDynamicType(u64),
     MissingShstrtabSection,
-    LinkedSectionIsNotStrtab(&'static str),
+    LinkedSectionIsNotStrtab{
+        during: &'static str,
+        link:  Option<SectionContent>,
+    },
     InvalidDynamicFlags1(u64),
     FirstSectionOffsetCanNotBeLargerThanAddress,
     MissingSymtabSection,
@@ -30,6 +34,26 @@ pub enum Error {
     InvalidSymbolShndx(String, u16),
     DynsymInStaticLibrary,
     SymbolSectionIndexExtendedCannotBeWritten,
+    WritingNotSynced,
+    SyncingUnloadedSection,
+    WritingUnloadedSection,
+    NoSymbolsInObject,
+    MultipleSymbolSections,
+    ConflictingSymbol{
+        sym:   String,
+        obj:   String,
+        con:   String,
+    },
+    UndefinedReference{
+        sym:    String,
+        obj:    String,
+    },
+    MovingLockedSection{
+        sec:        String,
+        old_addr:   u64,
+        new_addr:   u64,
+        cause:      String,
+    }
 }
 
 impl From<::std::io::Error> for Error {

@@ -24,6 +24,7 @@ pub enum UnitSegment {
     Executable,
     Data,
     Bss,
+    Tls,
 }
 impl Default for UnitSegment{
     fn default() -> UnitSegment {
@@ -40,7 +41,7 @@ pub struct Unit {
     pub code:        Vec<u8>,
     pub symbols:     Vec<Symbol>,
     pub relocations: Vec<Relocation>,
-    pub deps:    Vec<u64>,
+    pub deps:        Vec<u64>,
 
     s_lookup: HashMap<String, usize>,
 }
@@ -115,6 +116,8 @@ impl Unit {
                             behaviour:  behaviour.clone(),
                             segment:    if sec.header.shtype == types::SectionType::NOBITS {
                                 UnitSegment::Bss
+                            } else if sec.header.flags.contains(types::SectionFlags::TLS) {
+                                UnitSegment::Tls
                             } else if sec.header.flags.contains(types::SectionFlags::EXECINSTR) {
                                 UnitSegment::Executable
                             } else {
@@ -459,6 +462,54 @@ impl Lookup {
         }
         self.insert_unit(unit);
     }
+
+
+
+//FIXME this doesnt belong in Elf
+
+
+
+impl Elf {
+    /// check if a global defined symbol is exported from the elf file.
+    /// can be used to avoid load_all if a particular elf file doesn't
+    /// contain the symbol you need anyway.
+    /// It uses the cheapest possible method to determine the result
+    /// which is currently loading symtab into a hashmap
+    /// TODO should be replaced with checking HASH and GNU_HASH
+    pub fn contains_symbol(&mut self, name: &str) -> Result<bool, Error> {
+        if None == self.s_lookup {
+            let mut hm = HashSet::new();
+
+            for i in self.sections
+                .iter()
+                .enumerate()
+                .filter_map(|(i, ref sec)| {
+                    if sec.header.shtype == types::SectionType::SYMTAB
+                        || sec.header.shtype == types::SectionType::DYNSYM
+                    {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<usize>>()
+                .iter()
+            {
+                self.load(*i)?;
+                for sym in self.sections[*i].content.as_symbols().unwrap() {
+                    if sym.bind != types::SymbolBind::LOCAL
+                        && sym.shndx != SymbolSectionIndex::Undefined
+                    {
+                        hm.insert(sym.name.clone());
+                    }
+                }
+            }
+
+            self.s_lookup = Some(hm);
+        }
+        Ok(self.s_lookup.as_ref().unwrap().contains(name))
+    }
+}
 }
 
 
