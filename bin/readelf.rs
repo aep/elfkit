@@ -183,12 +183,14 @@ fn main() {
     println!("{}:", "Segment Layout".bold());
 
     let mut fls = vec![
+        /*
         (String::from("elf header"), 0, elf.header.ehsize as u64),
         (
             String::from("section headers"),
             elf.header.shoff,
             elf.header.shentsize as u64 * elf.header.shnum as u64,
         ),
+        */
     ];
     if elf.header.phoff > 0 {
         fls.push((

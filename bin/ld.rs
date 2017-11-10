@@ -60,9 +60,12 @@ fn main() {
         section::SectionContent::Raw(dl), 0, 0));
     }
 
-    let mut elf = SimpleCollector::new(elf).collect(linker).into_elf();
+    let mut collected = SimpleCollector::new(elf).collect(linker).into_collected();
 
-    DynamicRelocator::relocate(&mut elf).unwrap();
+    DynamicRelocator::relocate(&mut collected).unwrap();
+
+    let mut elf = collected.into_elf();
+
     elf.make_symtab_gnuld_compat();
     elf.layout().unwrap();
 
@@ -79,186 +82,68 @@ fn main() {
 struct DynamicRelocator {
 }
 impl DynamicRelocator {
-    pub fn relocate (elf: &mut Elf) -> Result<(), Error>  {
+    pub fn relocate (collected: &mut Collected) -> Result<(), Error>  {
 
-        let mut shndx_bss = None;
-        let mut last_alloc_shndx = 0;
-        for (i, ref sec) in elf.sections.iter().enumerate() {
-            if elf.sections[i].header.flags.contains(types::SectionFlags::ALLOC) {
-                last_alloc_shndx = i;
-            }
-            if elf.sections[i].header.shtype == types::SectionType::NOBITS {
-                shndx_bss = Some(i);
-            };
-        }
-
-        let shndx_dynamic = last_alloc_shndx + 1;
-        let shndx_got     = last_alloc_shndx + 2;
-        let shndx_hash    = last_alloc_shndx + 3;
-        let shndx_dynsym  = last_alloc_shndx + 4;
-        let shndx_reladyn = last_alloc_shndx + 5;
-        let shndx_dynstr  = last_alloc_shndx + 6;
-
-
-        elf.insert_section(shndx_dynamic, section::Section::new(b".dynamic".to_vec(), types::SectionType::DYNAMIC,
-        types::SectionFlags::ALLOC | types::SectionFlags::WRITE, // TODO why writeable?
-        section::SectionContent::Dynamic(vec![dynamic::Dynamic::default()]), 
-        shndx_dynstr as u32,0));
-
-        elf.insert_section(shndx_got, section::Section::new(b".got".to_vec(),
-        types::SectionType::NOBITS , types::SectionFlags::ALLOC | types::SectionFlags::WRITE,
+        let mut shndx_com = collected.elf.sections.len();
+        collected.elf.sections.push(section::Section::new(b".com".to_vec(),
+        types::SectionType::NOBITS, types::SectionFlags::ALLOC | types::SectionFlags::WRITE,
         section::SectionContent::None, 0, 0));
-        elf.sections[shndx_got].header.addralign = 16;
+        collected.elf.sections[shndx_com].header.addralign = 16;
 
-        //TODO
-        //layout won't break segments if a NOBITS section is zero size,
-        //but we need the additional segment _before_ reloc, so that the positions are fixed.
-        //alternatively we could make got a PROGBITS section, but i'd rather waste 16bits memory
-        //than kilobytes of disk for essentially storing zeros
-        elf.sections[shndx_got].header.size += 16;
+        let mut shndx_got = collected.elf.sections.len();
+        collected.elf.sections.push(section::Section::new(b".got".to_vec(),
+        types::SectionType::PROGBITS, types::SectionFlags::ALLOC,
+        section::SectionContent::None, 0, 0));
+        collected.elf.sections[shndx_got].header.addralign = 16;
 
-        elf.insert_section(shndx_hash, section::Section::new(b".hash".to_vec(),
-        types::SectionType::HASH, types::SectionFlags::ALLOC,
-        section::SectionContent::None, shndx_dynsym  as u32, 0));
+        let mut dynrel      = Vec::new();
+        let mut dynrel_addr = Vec::new();
 
-        elf.insert_section(shndx_dynsym, section::Section::new(b".dynsym".to_vec(),
-        types::SectionType::DYNSYM, types::SectionFlags::ALLOC,
-        section::SectionContent::None, shndx_dynstr as u32, 0));
+        let mut hrel        = Vec::new();
+        let mut got         = Vec::new();
+        let mut sym2got     = HashMap::new();
 
-        elf.insert_section(shndx_reladyn, section::Section::new(b".rela.dyn".to_vec(),
-        types::SectionType::RELA, types::SectionFlags::ALLOC,
-        section::SectionContent::Relocations(vec![relocation::Relocation::default()]),
-        shndx_dynsym as u32, 0));
-
-        elf.insert_section(shndx_dynstr, section::Section::new(b".dynstr".to_vec(),
-        types::SectionType::STRTAB, types::SectionFlags::ALLOC,
-        section::SectionContent::Strtab(elfkit::strtab::Strtab::default()), 0, 0));
-
-
-        elf.sections[shndx_dynamic].content = section::SectionContent::Dynamic(
-            DynamicRelocator::dynamic(elf)?);
-
-        elf.sections[shndx_dynamic].header.link = shndx_dynstr as u32;
-        elf.sections[shndx_hash   ].header.link = shndx_dynstr as u32;
-        elf.sections[shndx_dynsym ].header.link = shndx_dynstr as u32;
-        elf.sections[shndx_reladyn].header.link = shndx_dynsym as u32;
-
-        let mut relasecs : Vec<section::Section> = Vec::new();
-        let mut i = 0;
-        loop {
-            if elf.sections[i].header.flags.contains(types::SectionFlags::ALLOC) {
-                last_alloc_shndx = i;
-            }
-            match elf.sections[i].header.shtype {
-                types::SectionType::RELA if i != shndx_reladyn => {
-                    relasecs.push(elf.remove_section(i)?);
-                },
-                _ => {
-                    i += 1;
-                },
-            };
-            if i >= elf.sections.len() {
-                break;
-            }
-        }
-
-        elf.layout().unwrap();
-        elf.sections[shndx_got].addrlock = true;
-
-        for i in 0..elf.sections.len() {
-            if elf.sections[i].header.shtype == types::SectionType::SYMTAB  {
-                let mut symtab = std::mem::replace(&mut elf.sections[i], section::Section::default());
-                for sym in symtab.content.as_symbols_mut().unwrap().iter_mut() {
-                    if let symbol::SymbolSectionIndex::Section(so) = sym.shndx {
-                        let addr = elf.sections[so as usize].header.addr;
-                        sym.value += addr;
-                        if sym.name == b"_start" && sym.bind == types::SymbolBind::GLOBAL {
-                            elf.header.entry = sym.value;
-                        }
-                    }
-                }
-                elf.sections[i] = symtab;
-            }
-        }
-
-        let mut dynrel = Vec::new();
-        let mut dynsym = vec![symbol::Symbol::default()];
-
-        let got = elf.sections[shndx_got].header.addr;
-        let mut got_used = 0;
-        let mut sym_to_got = HashMap::new();
-
-        for relocsec in relasecs {
-            elf.sections[relocsec.header.info as usize].addrlock = true;
-            let secaddr = elf.sections[relocsec.header.info as usize].header.addr;
-
-            for mut reloc in relocsec.content.into_relocations().unwrap().into_iter() {
-                let mut sym = {
-                    let sym = &mut elf.sections[relocsec.header.link as usize].content.as_symbols_mut().unwrap()
-                        [reloc.sym as usize];
-
-                    match sym.shndx {
-                        symbol::SymbolSectionIndex::Section(_) => {},
-                        symbol::SymbolSectionIndex::Common => {
-                            let got_slot = got + got_used;
-                            got_used += sym.size;
-                            sym.value = got_slot;
-                            sym.shndx = symbol::SymbolSectionIndex::Section(shndx_got as u16);
-                        },
-                        symbol::SymbolSectionIndex::Undefined => {
-                            assert_eq!(sym.value, 0);
-                        },
-                        _ => panic!("garbage relocation {:?} against {:?}", reloc, sym),
-                    };
-                    sym.clone()
+        for (shndx, relocs) in collected.relocs.drain() {
+            for mut reloc in relocs {
+                let mut sym = collected.symtab.get(reloc.sym as usize).unwrap().clone();
+                match sym.shndx {
+                    symbol::SymbolSectionIndex::Section(_) => {},
+                    symbol::SymbolSectionIndex::Common => {
+                        let com_slot = collected.elf.sections[shndx_com].header.size;
+                        collected.elf.sections[shndx_com].header.size += sym.size;
+                        sym.value = com_slot;
+                        sym.shndx = symbol::SymbolSectionIndex::Section(shndx_com as u16);
+                        collected.symtab[reloc.sym as usize] = sym.clone();
+                    },
+                    symbol::SymbolSectionIndex::Undefined => {
+                        assert_eq!(sym.value, 0);
+                    },
+                    _ => panic!("garbage relocation {:?} against {:?}", reloc, sym),
                 };
 
                 match reloc.rtype {
                     relocation::RelocationType::R_X86_64_64 => {
                         reloc.rtype   = relocation::RelocationType::R_X86_64_RELATIVE;
-                        reloc.sym     = 0;
-                        reloc.addr   += secaddr;
-                        reloc.addend += sym.value as i64;
                         dynrel.push(reloc);
+                        dynrel_addr.push(shndx);
                     },
                     relocation::RelocationType::R_X86_64_PC32 |
                     relocation::RelocationType::R_X86_64_PLT32 => {
-                        let vaddr = elf.sections[relocsec.header.info as usize].header.addr + reloc.addr;
-                        let rv = ((sym.value as i64) + (reloc.addend as i64) - (vaddr as i64)) as i32;
-
-                        let mut w = match elf.sections[relocsec.header.info as usize].content.as_raw_mut() {
-                            Some(v) => v.as_mut_slice(),
-                            None => {
-                                panic!("relocation {} {:?} against non-raw section {} makes no sense",
-                                       String::from_utf8_lossy(&relocsec.name),
-                                       reloc,
-                                       relocsec.header.info);
-                            }
-                        };
-
-                        if reloc.addr > w.len() as u64 {
-                            panic!("relocation {} {:?} against section {} would exceed its size of {} bytes",
-                                   String::from_utf8_lossy(&relocsec.name),
-                                   reloc,
-                                   relocsec.header.info,
-                                   w.len());
-                        }
-
-                        let mut w = &mut w[reloc.addr as usize ..];
-                        elf_write_u32!(&elf.header, w, rv as u32)?;
+                        reloc.rtype = relocation::RelocationType::R_X86_64_PC32;
+                        hrel.push((shndx,reloc));
                     },
                     relocation::RelocationType::R_X86_64_GOTPCREL |
                         relocation::RelocationType::R_X86_64_GOTPCRELX |
                         relocation::RelocationType::R_X86_64_REX_GOTPCRELX => {
-                    
-                        let shndx_this_symtab = relocsec.header.link as usize;
-                        let got_slot = *sym_to_got.entry(reloc.sym).or_insert_with(||{
-                            let got_slot = got + got_used;
-                            got_used += 8;
-                            elf.sections[shndx_this_symtab].content.as_symbols_mut().unwrap()
-                                .push(symbol::Symbol{
+                        let got_sym = match sym2got.entry(reloc.sym) {
+                            hash_map::Entry::Occupied(e) => *e.get(),
+                            hash_map::Entry::Vacant(e) => {
+                                let got_slot = got.len();
+                                got.append(&mut vec![0;8]);
+                                let got_sym = collected.symtab.len();
+                                collected.symtab.push(symbol::Symbol{
                                     shndx:  symbol::SymbolSectionIndex::Section(shndx_got as u16),
-                                    value:  got_slot,
+                                    value:  got_slot as u64,
                                     size:   8,
                                     name:   [&sym.name[..], b"__GOT"].concat(),
                                     stype:  types::SymbolType::OBJECT,
@@ -266,15 +151,24 @@ impl DynamicRelocator {
                                     vis:    types::SymbolVis::DEFAULT,
                                     _name:  0,
                                 });
-                            dynrel.push(relocation::Relocation{
-                                addr:   got_slot,
-                                sym:    0,
-                                rtype:  relocation::RelocationType::R_X86_64_RELATIVE,
-                                addend: sym.value as i64,
-                            });
-                            got_slot
-                        });
+                                dynrel.push(relocation::Relocation{
+                                    addr:   got_slot as u64,
+                                    sym:    reloc.sym,
+                                    rtype:  relocation::RelocationType::R_X86_64_RELATIVE,
+                                    addend: 0,
+                                });
+                                dynrel_addr.push(shndx_got);
 
+                                e.insert(got_sym);
+                                got_sym
+                            },
+                        };
+
+                        reloc.sym = got_sym as u32;
+                        reloc.rtype = relocation::RelocationType::R_X86_64_PC32;
+                        hrel.push((shndx, reloc));
+
+                        /*
                         let vaddr = elf.sections[relocsec.header.info as usize].header.addr + reloc.addr;
                         let rv = ((got_slot as i64) + (reloc.addend as i64) - (vaddr as i64)) as i32;
                         let w = elf.sections[relocsec.header.info as usize].content.as_raw_mut()
@@ -290,7 +184,7 @@ impl DynamicRelocator {
 
                         let mut w = &mut w[reloc.addr as usize ..];
                         elf_write_u32!(&elf.header, w, rv as u32)?;
-
+                        */
                     },
                     relocation::RelocationType::R_X86_64_32 | relocation::RelocationType::R_X86_64_32S => {
                         panic!("unsupported relocation. maybe missing -fPIC ? {:?}", reloc);
@@ -302,21 +196,123 @@ impl DynamicRelocator {
             }
         }
 
-        elf.sections[shndx_got].header.size = got_used;
+        collected.elf.sections[shndx_got].content = section::SectionContent::Raw(got);
 
-        elf.sections[shndx_hash]            = symbol::symhash(&elf.header, &dynsym, shndx_dynsym as u32 + 1)?;
-        elf.sections[shndx_dynsym].content  = section::SectionContent::Symbols(dynsym);
-        elf.sections[shndx_reladyn].content = section::SectionContent::Relocations(dynrel);
+        let mut shndx_dynstr = collected.elf.sections.len();
+        collected.elf.sections.push(section::Section::new(b".dynstr".to_vec(),
+        types::SectionType::STRTAB, types::SectionFlags::ALLOC,
+        section::SectionContent::Strtab(elfkit::strtab::Strtab::default()), 0, 0));
+
+        let mut shndx_dynsym = collected.elf.sections.len();
+        collected.elf.sections.push(section::Section::new(b".dynsym".to_vec(),
+        types::SectionType::DYNSYM, types::SectionFlags::ALLOC,
+        section::SectionContent::Symbols(vec![symbol::Symbol::default()]), shndx_dynstr as u32, 0));
+
+        let mut shndx_hash = collected.elf.sections.len();
+        collected.elf.sections.push(section::Section::new(b".hash".to_vec(),
+        types::SectionType::HASH, types::SectionFlags::ALLOC,
+        section::SectionContent::None, shndx_dynsym  as u32, 0));
+
+        let mut shndx_reladyn = collected.elf.sections.len();
+        collected.elf.sections.push(section::Section::new(b".rela.dyn".to_vec(),
+        types::SectionType::RELA, types::SectionFlags::ALLOC,
+        section::SectionContent::Relocations(dynrel),
+        shndx_dynsym as u32, 0));
+
+        let mut shndx_dynamic = collected.elf.sections.len();
+        let dynamic = DynamicRelocator::dynamic(&collected.elf)?;
+        collected.elf.sections.push(section::Section::new(b".dynamic".to_vec(), types::SectionType::DYNAMIC,
+        types::SectionFlags::ALLOC | types::SectionFlags::WRITE, // TODO why writeable?
+        //section::SectionContent::Dynamic(vec![dynamic::Dynamic::default()]),
+        section::SectionContent::Dynamic(dynamic),
+        shndx_dynstr as u32,0));
 
 
-        elf.layout().unwrap();
+        let remap = collected.reorder()?;
 
-        elf.sections[shndx_hash   ].addrlock = true;
-        elf.sections[shndx_dynsym ].addrlock = true;
-        elf.sections[shndx_reladyn].addrlock = true;
+        collected.elf.layout().unwrap();
 
-        elf.sections[shndx_dynamic].content = section::SectionContent::Dynamic(
-            DynamicRelocator::dynamic(elf)?);
+        if let Some(v) = remap.get(&shndx_hash) {
+            shndx_hash = *v;
+        }
+        if let Some(v) = remap.get(&shndx_dynsym) {
+            shndx_dynsym = *v;
+        }
+        if let Some(v) = remap.get(&shndx_reladyn) {
+            shndx_reladyn = *v;
+        }
+        if let Some(v) = remap.get(&shndx_dynamic) {
+            shndx_dynamic = *v;
+        }
+
+        collected.elf.sections[shndx_hash   ].addrlock = true;
+        collected.elf.sections[shndx_dynsym ].addrlock = true;
+        collected.elf.sections[shndx_reladyn].addrlock = true;
+        collected.elf.sections[shndx_dynamic].content = section::SectionContent::Dynamic(
+            DynamicRelocator::dynamic(&collected.elf)?);
+
+
+
+        for sym in collected.symtab.iter_mut() {
+            if let symbol::SymbolSectionIndex::Section(mut so) = sym.shndx {
+                let addr = collected.elf.sections[so as usize].header.addr;
+                sym.value += addr;
+                if sym.name == b"_start" && sym.bind == types::SymbolBind::GLOBAL {
+                    collected.elf.header.entry = sym.value;
+                }
+            }
+        }
+
+
+        let mut reladyn = std::mem::replace(collected.elf.sections[shndx_reladyn].content
+                                        .as_relocations_mut().unwrap(), Vec::new());
+        for (i, rel) in reladyn.iter_mut().enumerate() {
+            let mut shndx = dynrel_addr[i];
+            if let Some(v) = remap.get(&shndx) {
+                shndx = *v;
+            }
+            rel.addend  += collected.symtab[rel.sym as usize].value as i64;
+            rel.sym     =  0;
+            rel.addr    += collected.elf.sections[shndx].header.addr;
+        }
+        collected.elf.sections[shndx_reladyn].content = section::SectionContent::Relocations(reladyn);
+
+
+
+
+        for (mut shndx, reloc) in hrel.into_iter() {
+            if let Some(v) = remap.get(&shndx) {
+                shndx = *v;
+            }
+            let sym = collected.symtab.get(reloc.sym as usize).unwrap();
+            match reloc.rtype {
+                relocation::RelocationType::R_X86_64_PC32 => {
+                    let vaddr = collected.elf.sections[shndx].header.addr + reloc.addr;
+                    let mut rv = ((sym.value as i64) + (reloc.addend as i64) - (vaddr as i64)) as i32;
+
+                    if sym.value == 0 {
+                        println!("warning: relative reloc to undefined symbol {:?} -> {:?}",  reloc, sym);
+                    }
+
+                    let mut w = match collected.elf.sections[shndx].content.as_raw_mut() {
+                        Some(v) => v.as_mut_slice(),
+                        None => {
+                            panic!("relocation {:?} against non-raw section {} makes no sense",
+                                   reloc, shndx);
+                        }
+                    };
+
+                    if reloc.addr > w.len() as u64 {
+                        panic!("relocation {:?} against section {} would exceed its size of {} bytes",
+                               reloc, shndx, w.len());
+                    }
+
+                    let mut w = &mut w[reloc.addr as usize ..];
+                    elf_write_u32!(&collected.elf.header, w, rv as u32)?;
+                },
+                _ => unreachable!(),
+            }
+        }
 
         Ok(())
 
@@ -417,19 +413,93 @@ impl DynamicRelocator {
 }
 
 
+pub struct Collected {
+    pub elf:        Elf,
+    pub symtab:     Vec<symbol::Symbol>,
+    pub relocs:     HashMap<usize, Vec<relocation::Relocation>>,
+}
+
+impl Collected {
+    pub fn into_elf(mut self) -> Elf {
+        let sh_index_strtab = self.elf.sections.len();
+
+        self.elf.sections.push(section::Section::new(b".strtab".to_vec(), types::SectionType::STRTAB,
+        types::SectionFlags::empty(),
+        section::SectionContent::Strtab(elfkit::strtab::Strtab::default()), 0,0));
+
+        let sh_index_symtab = self.elf.sections.len();
+        let first_global_symtab = self.symtab.iter().enumerate()
+            .find(|&(_,s)|s.bind == types::SymbolBind::GLOBAL).map(|(i,_)|i).unwrap_or(0);;
+        self.elf.sections.push(section::Section::new(b".symtab".to_vec(), types::SectionType::SYMTAB,
+        types::SectionFlags::empty(),
+        section::SectionContent::Symbols(self.symtab),
+        sh_index_strtab as u32, first_global_symtab as u32));
+
+        for (mut shndx, relocs) in self.relocs {
+            let mut name = b".rela".to_vec();
+            name.append(&mut self.elf.sections[shndx].name.clone());
+
+            let sh_index_strtab = self.elf.sections.len();
+            self.elf.sections.push(section::Section::new(name, types::SectionType::RELA,
+                                                              types::SectionFlags::empty(),
+                                                              section::SectionContent::Relocations(relocs), sh_index_symtab as u32, shndx as u32));
+        }
+
+        self.elf.sections.push(section::Section::new(b".shstrtab".to_vec(), types::SectionType::STRTAB,
+        types::SectionFlags::from_bits_truncate(0),
+        section::SectionContent::Strtab(elfkit::strtab::Strtab::default()),
+        0,0));
+
+        self.elf
+    }
+    pub fn reorder(&mut self) -> Result<HashMap<usize,usize>, Error> {
+        let reorder = self.elf.reorder()?;
+        for sym in &mut self.symtab {
+            if let symbol::SymbolSectionIndex::Section(shndx) = sym.shndx {
+                if let Some(nu) = reorder.get(&(shndx as usize)) {
+                    sym.shndx = symbol::SymbolSectionIndex::Section(*nu as u16);
+                }
+            }
+        }
+
+        for (mut i, reloc) in std::mem::replace(&mut self.relocs, HashMap::new()) {
+            if let Some(nu) = reorder.get(&i) {
+                i = *nu;
+            }
+            self.relocs.insert(i, reloc);
+        }
+
+        Ok(reorder)
+    }
+
+}
+
+pub trait Collector {
+    fn into_collected(self) -> Collected;
+}
+
 
 /// a dummy implementation of Collector which works for testing
 pub struct SimpleCollector {
-    elf:        Elf,
-    symtab:     Vec<symbol::Symbol>,
-
-    sections:   OrderMap<Vec<u8>, section::Section>,
-    relocs:     HashMap<usize, Vec<relocation::Relocation>>,
+    pub collected:  Collected,
+    sections: OrderMap<Vec<u8>, section::Section>,
 }
+
+impl Collector for SimpleCollector {
+    fn into_collected(mut self) -> Collected {
+        let mut collected = self.collected;
+        collected.elf.sections = self.sections.drain(..).map(|v|v.1).collect();
+
+        collected
+    }
+}
+
+
 
 impl SimpleCollector {
 
     pub fn new(mut elf: Elf) -> SimpleCollector {
+
         let mut sections = OrderMap::new();
         if elf.sections.len() < 1 {
             sections.insert(Vec::new(), section::Section::default());
@@ -439,11 +509,16 @@ impl SimpleCollector {
             }
         }
 
-        Self{
-            elf:        elf,
-            sections:   sections,
+        let collected = Collected {
+            elf: elf,
             relocs:     HashMap::new(),
             symtab:     Vec::new(),
+        };
+
+
+        Self{
+            collected:  collected,
+            sections:   sections,
         }
     }
 
@@ -468,16 +543,16 @@ impl SimpleCollector {
                                 loc.sym.shndx = symbol::SymbolSectionIndex::Section(nu_shndx as u16);
                                 loc.sym.value += nu_off as u64;
                             }
-                            self.symtab.push(loc.sym.clone());
+                            self.collected.symtab.push(loc.sym.clone());
                         },
                     };
                 },
                 symbol::SymbolSectionIndex::Undefined => {
-                    self.symtab.push(loc.sym.clone());
+                    self.collected.symtab.push(loc.sym.clone());
                 },
                 symbol::SymbolSectionIndex::Absolute |
                     symbol::SymbolSectionIndex::Common => {
-                    self.symtab.push(loc.sym.clone());
+                    self.collected.symtab.push(loc.sym.clone());
                 },
             }
         }
@@ -495,44 +570,8 @@ impl SimpleCollector {
         }
         self.elf.sections = secs_rest.into_iter().chain(secs_bss.into_iter()).collect();
         */
-        self.elf.sections = self.sections.drain(..).map(|v|v.1).collect();
         self
     }
-
-    pub fn into_elf(mut self) -> Elf {
-
-        let sh_index_strtab = self.elf.sections.len();
-        self.elf.sections.push(section::Section::new(b".strtab".to_vec(), types::SectionType::STRTAB,
-        types::SectionFlags::empty(),
-        section::SectionContent::Strtab(elfkit::strtab::Strtab::default()), 0,0));
-
-        let sh_index_symtab = self.elf.sections.len();
-        let first_global_symtab = self.symtab.iter().enumerate()
-            .find(|&(_,s)|s.bind == types::SymbolBind::GLOBAL).map(|(i,_)|i).unwrap_or(0);;
-        self.elf.sections.push(section::Section::new(b".symtab".to_vec(), types::SectionType::SYMTAB,
-        types::SectionFlags::empty(),
-        section::SectionContent::Symbols(self.symtab),
-        sh_index_strtab as u32, first_global_symtab as u32));
-
-        for (mut shndx, relocs) in self.relocs {
-            let mut name = b".rela".to_vec();
-            name.append(&mut self.elf.sections[shndx].name.clone());
-
-            let sh_index_strtab = self.elf.sections.len();
-            self.elf.sections.push(section::Section::new(name, types::SectionType::RELA,
-            types::SectionFlags::empty(),
-            section::SectionContent::Relocations(relocs), sh_index_symtab as u32, shndx as u32));
-        }
-
-
-        self.elf.sections.push(section::Section::new(b".shstrtab".to_vec(), types::SectionType::STRTAB,
-        types::SectionFlags::from_bits_truncate(0),
-        section::SectionContent::Strtab(elfkit::strtab::Strtab::default()),
-        0,0));
-
-        self.elf
-    }
-
 
     fn merge(&mut self, mut sec: section::Section, mut rela: Vec<relocation::Relocation>) -> (usize, usize) {
 
@@ -585,7 +624,7 @@ impl SimpleCollector {
             },
         };
 
-        let relav = self.relocs.entry(nu_shndx).or_insert_with(||Vec::new());
+        let relav = self.collected.relocs.entry(nu_shndx).or_insert_with(||Vec::new());
         for mut rel in rela {
             rel.addr += nu_off as u64;
             relav.push(rel);

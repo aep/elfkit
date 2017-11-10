@@ -338,6 +338,77 @@ impl Elf {
             symtab_remap.into_iter().map(|(k,v)|v).collect());
     }
 
+
+    /// reorder to minimize segmentation
+    /// will only reorder sections that come after the last locked section
+    pub fn reorder(self: &mut Elf) -> Result<HashMap<usize,usize>, Error> {
+
+        let mut reorder = Vec::new();
+        loop {
+            let shndx = self.sections.len() - 1;
+            if shndx < 1 || self.sections[shndx].addrlock {
+                break;
+            }
+            reorder.push((shndx, self.sections.pop().unwrap()));
+        }
+
+
+        reorder.sort_by(|&(i1,ref s1),&(i2,ref s2)|{
+            if s1.header.shtype != s2.header.shtype {
+                if s1.header.shtype == types::SectionType::NOBITS {
+                    return std::cmp::Ordering::Greater;
+                }
+            }
+
+            let s1_a = s1.header.flags.contains(types::SectionFlags::ALLOC);
+            let s1_w = s1.header.flags.contains(types::SectionFlags::WRITE);
+            let s2_a = s2.header.flags.contains(types::SectionFlags::ALLOC);
+            let s2_w = s2.header.flags.contains(types::SectionFlags::WRITE);
+
+            if s1_a != s2_a {
+                if s1_a {
+                    return std::cmp::Ordering::Less;
+                } else {
+                    return std::cmp::Ordering::Greater;
+                }
+            }
+            if s1_w != s2_w {
+                if s1_w {
+                    return std::cmp::Ordering::Greater;
+                } else {
+                    return std::cmp::Ordering::Less;
+                }
+            }
+
+            if s1.header.shtype != s2.header.shtype  {
+                return s1.header.shtype.to_u32().cmp(&s2.header.shtype.to_u32());
+            }
+
+            //this is just for stabilization
+            //TODO but we should probably do something else
+            s1.name.cmp(&s2.name)
+        });
+
+        let mut remap = HashMap::new();
+        for (i,sec) in reorder {
+            remap.insert(i, self.sections.len());
+            self.sections.push(sec);
+        }
+
+        for sec in &mut self.sections {
+            if let Some(v) = remap.get(&(sec.header.link as usize)) {
+                sec.header.link = *v as u32;
+            }
+            if sec.header.flags.contains(types::SectionFlags::INFO_LINK) {
+                if let Some(v) = remap.get(&(sec.header.info as usize)) {
+                    sec.header.info = *v as u32;
+                }
+            }
+        }
+
+        Ok(remap)
+    }
+
     pub fn layout(self: &mut Elf) -> Result<(), Error> {
         self.sync_all()?;
 
