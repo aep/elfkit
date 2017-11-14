@@ -233,12 +233,20 @@ impl SymbolicLinker {
                                     let i = *e.get();
                                     if let symbol::SymbolSectionIndex::Section(_) = self.symtab[i].sym.shndx {
                                         if self.symtab[i].sym.bind != types::SymbolBind::WEAK {
-                                            return Err(Error::ConflictingSymbol{
-                                                sym:   String::from_utf8_lossy(&self.symtab[i].sym.name)
-                                                    .into_owned(),
-                                                obj:   String::default(),
-                                                con:   self.objects[&self.symtab[i].obj].name.clone(),
-                                            });
+                                            if self.objects[&self.symtab[i].obj].name.contains("::") {
+                                                println!("conflicting definitions of {} \
+                                                    ignored because for gnu compatibility. picking {}",
+                                                    String::from_utf8_lossy(&self.symtab[i].sym.name),
+                                                    self.objects[&self.symtab[i].obj].name.clone()
+                                                    );
+                                            } else {
+                                                return Err(Error::ConflictingSymbol{
+                                                    sym:   String::from_utf8_lossy(&self.symtab[i].sym.name)
+                                                        .into_owned(),
+                                                        obj:   String::default(),
+                                                        con:   self.objects[&self.symtab[i].obj].name.clone(),
+                                                });
+                                            }
                                         }
                                     };
                                     self.symtab[i] = LinkableSymbol{sym: sym,

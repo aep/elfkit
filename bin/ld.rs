@@ -51,6 +51,38 @@ fn main() {
             println!("lookup complete: {} nodes in link tree", linker.objects.len());
             linker.gc();
             println!("  after gc: {}", linker.objects.len());
+    let mut file = File::create("link.dot").unwrap();
+    writeln!(&mut file, "digraph link{{").unwrap();
+    writeln!(&mut file, "    node[shape=record]").unwrap();
+    writeln!(&mut file, "
+    Legend [pos=\"1,1\", pin=true, shape=none, margin=0, label=<
+        <table border=\"2\" cellborder=\"1\" cellspacing=\"0\" cellpadding=\"4\">
+            <tr>
+                <td colspan=\"2\"><b>Legend</b></td>
+            </tr>
+            <tr>
+                <td bgcolor=\"red\">Red</td>
+                <td>UNDEF</td>
+            </tr>
+            <tr>
+                <td >Regular line</td>
+                <td>GLOBAL</td>
+            </tr>
+            <tr>
+                <td>Dashed line</td>
+                <td>WEAK</td>
+            </tr>
+            <tr>
+                <td>Dotted line</td>
+                <td>COMMON</td>
+            </tr>
+        </table>
+    >];
+    ").unwrap();
+
+    linker.write_graphviz(&mut file).unwrap();
+
+    writeln!(&mut file, "}}").unwrap();
 
             elf.sections.push(section::Section::default());
             let mut dl = args.dynamic_linker.into_bytes();
@@ -206,7 +238,7 @@ impl DynamicRelocator {
                         */
                     },
                     relocation::RelocationType::R_X86_64_32 | relocation::RelocationType::R_X86_64_32S => {
-                        panic!("unsupported relocation. maybe missing -fPIC ? {:?}", reloc);
+                        println!("unsupported relocation. maybe missing -fPIC ? {:?} -> {:?}", reloc, sym);
                     },
                     _ => {
                         panic!("elfkit::StaticRelocator relocation not implemented {:?}", reloc);
@@ -555,7 +587,7 @@ impl SimpleCollector {
         let mut input_map = HashMap::new();
 
         for (_, mut object) in linker.objects {
-            let (nu_shndx, nu_off) = self.merge(object.section, object.relocs);
+            let (nu_shndx, nu_off) = self.merge(object.section, object.relocs, object.name);
             input_map.insert(object.lid, (nu_shndx, nu_off));
         }
 
@@ -601,7 +633,7 @@ impl SimpleCollector {
         self
     }
 
-    fn merge(&mut self, mut sec: section::Section, mut rela: Vec<relocation::Relocation>) -> (usize, usize) {
+    fn merge(&mut self, mut sec: section::Section, mut rela: Vec<relocation::Relocation>, objname: String) -> (usize, usize) {
 
         let mut name = sec.name.clone();
         if name.len() > 3 && &name[0..4] == b".bss" {
@@ -654,6 +686,13 @@ impl SimpleCollector {
 
         let relav = self.collected.relocs.entry(nu_shndx).or_insert_with(||Vec::new());
         for mut rel in rela {
+            match rel.rtype {
+                relocation::RelocationType::R_X86_64_32 | relocation::RelocationType::R_X86_64_32S => {
+                    println!("unsupported relocation. maybe missing -fPIC ? {:?} in {}", 
+                           rel, objname);
+                },
+                _ => {},
+            };
             rel.addr += nu_off as u64;
             relav.push(rel);
         }
@@ -732,7 +771,10 @@ pub fn parse_ld_options() -> LdOptions{
         if let Some(val) = ldarg(&arg, "-L", &mut argc) {
             search_paths.push(val);
         } else if let Some(val) = ldarg(&arg, "-l", &mut argc) {
-            options.object_paths.push(search_lib(&search_paths, &val));
+            let path = search_lib(&search_paths, &val);
+            if !options.object_paths.contains(&path) {
+                options.object_paths.push(path);
+            }
         } else if let Some(val) = ldarg(&arg, "-m", &mut argc) {
             if val != "elf_x86_64" {
                 panic!("machine not supported: {}", val);
