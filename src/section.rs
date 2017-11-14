@@ -267,13 +267,17 @@ impl Section {
             SectionContent::Unloaded => {},
             _ => return Ok(()),
         };
+        if self.header.shtype == types::SectionType::NOBITS {
+            self.content = SectionContent::None;
+            return Ok(());
+        };
         io.seek(SeekFrom::Start(self.header.offset))?;
         let mut bb = vec![0; self.header.size as usize];
         io.read_exact(&mut bb)?;
         let linked = linked.map(|s|&s.content);
         self.content = match self.header.shtype {
             types::SectionType::NOBITS => {
-                SectionContent::None
+                unreachable!();
             },
             types::SectionType::STRTAB => {
                 let mut io = bb.as_slice();

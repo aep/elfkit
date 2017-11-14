@@ -107,9 +107,8 @@ impl DynamicRelocator {
 
         let mut shndx_got = collected.elf.sections.len();
         collected.elf.sections.push(section::Section::new(b".got".to_vec(),
-        //TODO still an odd one to me: ".got" doesn't need to be writable when using an ldso,
-        //although we have relocations in it. does an ldso simply map the segments write and
-        //changes segmentation protection to read _after_ relocation?
+        //musl's dalias basically said got must be writeable. i disagree and gnuld seems to do
+        //relocs before protection, so lots more stuff can do read only, but whatever
         types::SectionType::PROGBITS, types::SectionFlags::ALLOC | types::SectionFlags::WRITE,
         section::SectionContent::None, 0, 0));
         collected.elf.sections[shndx_got].header.addralign = 16;
