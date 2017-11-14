@@ -63,7 +63,9 @@ impl Header {
     {
         let mut r = Header::default();
         let mut b = [0; 16];
-        io.read_exact(&mut b)?;
+        if let Err(_) = io.read_exact(&mut b) {
+            return  Err(Error::InvalidMagic);
+        }
         r.ident_magic.clone_from_slice(&b[0..4]);
 
         if r.ident_magic != [0x7F, 0x45, 0x4c, 0x46] {

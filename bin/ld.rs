@@ -20,54 +20,69 @@ fn main() {
     let mut loader: Vec<loader::State> = args.object_paths.into_iter().map(|s|{
         loader::State::Path{name:s}}).collect();
 
-    let rootsym = env::args().nth(1).unwrap().into_bytes();
-    loader.push(loader::State::Object{
-        name:     String::from("___linker_entry"),
-        symbols:  vec![symbol::Symbol{
-            stype: types::SymbolType::FUNC,
-            size:  0,
-            value: 0,
-            bind:  types::SymbolBind::GLOBAL,
-            vis:   types::SymbolVis::DEFAULT,
-            shndx: symbol::SymbolSectionIndex::Undefined,
-            name:  b"_start".to_vec(),
-            _name: 0,
-        }],
-        header:   Header::default(),
-        sections: Vec::new(),
-    });
-
-    let mut linker = SymbolicLinker::default();
-    linker.link(loader).unwrap();
-    println!("lookup complete: {} nodes in link tree", linker.objects.len());
-    linker.gc();
-    println!("  after gc: {}", linker.objects.len());
-
-
     let mut elf = Elf::default();
     elf.header.ident_class      = types::Class::Class64;
     elf.header.ident_endianness = types::Endianness::LittleEndian;
     elf.header.ident_abi        = types::Abi::SYSV;
-    elf.header.etype            = types::ElfType::DYN;
+    elf.header.etype            = args.etype;
     elf.header.machine          = types::Machine::X86_64;
 
-    elf.sections.push(section::Section::default());
-    let mut dl = args.dynamic_linker.into_bytes();
-    if dl.len() > 0 {
-        dl.push(0);
-        elf.sections.push(section::Section::new(b".interp".to_vec(), types::SectionType::PROGBITS,
-        types::SectionFlags::ALLOC,
-        section::SectionContent::Raw(dl), 0, 0));
-    }
+    let mut elf = match elf.header.etype {
+        types::ElfType::DYN => {
+            let rootsym = env::args().nth(1).unwrap().into_bytes();
+            loader.push(loader::State::Object{
+                name:     String::from("___linker_entry"),
+                symbols:  vec![symbol::Symbol{
+                    stype: types::SymbolType::FUNC,
+                    size:  0,
+                    value: 0,
+                    bind:  types::SymbolBind::GLOBAL,
+                    vis:   types::SymbolVis::DEFAULT,
+                    shndx: symbol::SymbolSectionIndex::Undefined,
+                    name:  b"_start".to_vec(),
+                    _name: 0,
+                }],
+                header:   Header::default(),
+                sections: Vec::new(),
+            });
 
-    let mut collected = SimpleCollector::new(elf).collect(linker).into_collected();
+            let mut linker = SymbolicLinker::default();
+            linker.link(loader).unwrap();
+            println!("lookup complete: {} nodes in link tree", linker.objects.len());
+            linker.gc();
+            println!("  after gc: {}", linker.objects.len());
 
-    DynamicRelocator::relocate(&mut collected).unwrap();
+            elf.sections.push(section::Section::default());
+            let mut dl = args.dynamic_linker.into_bytes();
+            if dl.len() > 0 {
+                dl.push(0);
+                elf.sections.push(section::Section::new(b".interp".to_vec(), types::SectionType::PROGBITS,
+                types::SectionFlags::ALLOC,
+                section::SectionContent::Raw(dl), 0, 0));
+            }
 
-    let mut elf = collected.into_elf();
+            let mut collected = SimpleCollector::new(elf).collect(linker).into_collected();
+            DynamicRelocator::relocate(&mut collected).unwrap();
+            let mut elf = collected.into_elf();
+            elf.make_symtab_gnuld_compat();
+            elf.layout().unwrap();
+            elf
+        },
+        types::ElfType::REL => {
+            let mut linker = SymbolicLinker::default();
+            linker.link_all(loader).unwrap();
+            println!("lookup complete: {} nodes in link tree", linker.objects.len());
+            elf.sections.push(section::Section::default());
+            let mut collected = SimpleCollector::new(elf).collect(linker).into_collected();
+            DynamicRelocator::relocate(&mut collected).unwrap();
+            let mut elf = collected.into_elf();
+            elf.make_symtab_gnuld_compat();
+            elf.layout().unwrap();
+            elf
+        },
+        _ => unreachable!(),
+    };
 
-    elf.make_symtab_gnuld_compat();
-    elf.layout().unwrap();
 
 
     let mut out_file = OpenOptions::new().write(true).truncate(true).create(true).open(args.output_path).unwrap();
@@ -92,7 +107,10 @@ impl DynamicRelocator {
 
         let mut shndx_got = collected.elf.sections.len();
         collected.elf.sections.push(section::Section::new(b".got".to_vec(),
-        types::SectionType::PROGBITS, types::SectionFlags::ALLOC,
+        //TODO still an odd one to me: ".got" doesn't need to be writable when using an ldso,
+        //although we have relocations in it. does an ldso simply map the segments write and
+        //changes segmentation protection to read _after_ relocation?
+        types::SectionType::PROGBITS, types::SectionFlags::ALLOC | types::SectionFlags::WRITE,
         section::SectionContent::None, 0, 0));
         collected.elf.sections[shndx_got].header.addralign = 16;
 
@@ -123,6 +141,8 @@ impl DynamicRelocator {
 
                 match reloc.rtype {
                     relocation::RelocationType::R_X86_64_64 => {
+                        //TODO: if sym is zero, we really should not emit a RELATIVE reloc. it wont
+                        //be zero
                         reloc.rtype   = relocation::RelocationType::R_X86_64_RELATIVE;
                         dynrel.push(reloc);
                         dynrel_addr.push(shndx);
@@ -218,6 +238,7 @@ impl DynamicRelocator {
         types::SectionType::RELA, types::SectionFlags::ALLOC,
         section::SectionContent::Relocations(dynrel),
         shndx_dynsym as u32, 0));
+        collected.elf.sections[shndx_reladyn].header.addralign = 8;
 
         let mut shndx_dynamic = collected.elf.sections.len();
         let dynamic = DynamicRelocator::dynamic(&collected.elf)?;
@@ -226,6 +247,7 @@ impl DynamicRelocator {
         //section::SectionContent::Dynamic(vec![dynamic::Dynamic::default()]),
         section::SectionContent::Dynamic(dynamic),
         shndx_dynstr as u32,0));
+        collected.elf.sections[shndx_dynamic].header.addralign = 8;
 
 
         let remap = collected.reorder()?;
@@ -260,6 +282,13 @@ impl DynamicRelocator {
                 if sym.name == b"_start" && sym.bind == types::SymbolBind::GLOBAL {
                     collected.elf.header.entry = sym.value;
                 }
+            }
+            if sym.name == b"_DYNAMIC" {
+                sym.stype   = types::SymbolType::OBJECT;
+                sym.bind    = types::SymbolBind::LOCAL;
+                sym.vis     = types::SymbolVis::DEFAULT;
+                sym.value   = collected.elf.sections[shndx_dynamic].header.addr;
+                sym.shndx   = symbol::SymbolSectionIndex::Section(shndx_dynamic as u16);
             }
         }
 
@@ -643,12 +672,25 @@ impl SimpleCollector {
 
 use std::path::Path;
 
-#[derive(Default)]
 pub struct LdOptions {
     pub dynamic_linker: String,
     pub object_paths:   Vec<String>,
     pub output_path:    String,
+    pub etype:          types::ElfType,
 }
+
+impl Default for LdOptions {
+    fn default() -> Self {
+        Self {
+            dynamic_linker: String::default(),
+            object_paths:   Vec::new(),
+            output_path:    String::from("a.out"),
+            etype:          types::ElfType::DYN,
+        }
+    }
+}
+
+
 
 fn search_lib(search_paths: &Vec<String>, needle: &String) -> String{
     let so = String::from("lib") + needle + ".a";
@@ -674,9 +716,9 @@ fn ldarg(arg: &String, argname: &str, argc: &mut usize) -> Option<String> {
     }
 }
 
+
 pub fn parse_ld_options() -> LdOptions{
     let mut options         = LdOptions::default();
-    options.output_path     = String::from("a.out");
     let mut search_paths    = Vec::new();
 
     println!("arguments to ld.elfkit: {:?}", env::args());
@@ -690,12 +732,6 @@ pub fn parse_ld_options() -> LdOptions{
         let arg = env::args().nth(argc).unwrap();
         if let Some(val) = ldarg(&arg, "-L", &mut argc) {
             search_paths.push(val);
-        } else if let Some(val) = ldarg(&arg, "-z", &mut argc) {
-        } else if let Some(val) = ldarg(&arg, "-z", &mut argc) {
-            argc += 1;
-            let arg2 = env::args().nth(argc).unwrap();
-            println!("{}", format!("argument ignored: {} {}", arg,arg2).yellow());
-
         } else if let Some(val) = ldarg(&arg, "-l", &mut argc) {
             options.object_paths.push(search_lib(&search_paths, &val));
         } else if let Some(val) = ldarg(&arg, "-m", &mut argc) {
@@ -705,9 +741,17 @@ pub fn parse_ld_options() -> LdOptions{
         } else if let Some(val) = ldarg(&arg, "-o", &mut argc) {
             options.output_path = val;
         } else if arg == "-pie" {
+        } else if arg == "-r" {
+            options.etype = types::ElfType::REL;
         } else if arg == "-dynamic-linker" {
             argc += 1;
             options.dynamic_linker = env::args().nth(argc).unwrap()
+        } else if let Some(val) = ldarg(&arg, "-z", &mut argc) {
+            println!("{}", format!("argument ignored: -z {}" ,val).yellow());
+
+        } else if arg == "-plugin" {
+            argc += 1;
+            println!("{}", format!("argument ignored: -plugin {}" , env::args().nth(argc).unwrap()).yellow());
         } else if arg.starts_with("-") {
             println!("{}", format!("argument ignored: {}",arg).yellow());
         } else {

@@ -25,7 +25,7 @@ ordermap = "0.3.0"
 
 
 #ar = "0.3.1"
-ar = {git = "https://github.com/mdsteele/rust-ar.git"}
+ar = {git = "https://github.com/aep/rust-ar.git"}
 
 
 ## bin dependencies

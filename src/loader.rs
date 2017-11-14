@@ -47,11 +47,23 @@ pub enum State {
 }
 
 pub trait Loader {
+    fn load_all<E>(self, e: &E) ->  Vec<State>
+        where E: Fn(Error, String) -> Vec<State> + Sync;
     fn load_if<E>(self, needles: &Vec<&[u8]>, e: &E) ->  (Vec<State>,Vec<State>)
         where E: Fn(Error, String) -> Vec<State> + Sync;
 }
 
 impl Loader for Vec<State> {
+    fn load_all<E>(self, e: &E) ->  Vec<State>
+        where E: Fn(Error, String) -> Vec<State> + Sync
+    {
+        self.into_par_iter()
+            .flat_map(|l| l.load(e))
+            .flat_map(|l| l.load(e))
+            .flat_map(|l| l.load(e))
+            .flat_map(|l| l.load(e))
+            .collect()
+    }
     fn load_if<E>(self, needles: &Vec<&[u8]>, e: &E) ->  (Vec<State>,Vec<State>)
         where E: Fn(Error, String) -> Vec<State> + Sync
     {

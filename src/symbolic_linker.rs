@@ -46,6 +46,19 @@ pub struct SymbolicLinker {
 }
 
 impl SymbolicLinker {
+    pub fn link_all(&mut self, mut loader: Vec<loader::State>) -> Result<(), Error> {
+        let loader = loader.load_all(&|e,name| {
+            println!("elfkit::Linker {:?} while loading {}", e, name);
+            Vec::with_capacity(0)
+        });
+        self.objects.reserve(loader.len());
+        for ma in loader {
+            if let loader::State::Object{name, header, symbols, sections} = ma {
+                self.insert_object(name, header, symbols, sections)?;
+            }
+        }
+        Ok(())
+    }
     pub fn link(&mut self, mut loader: Vec<loader::State>) -> Result<(), Error> {
         loop {
             let (l2, matches) = self.link_iteration(loader);
