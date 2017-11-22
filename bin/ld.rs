@@ -290,6 +290,20 @@ impl DynamicRelocator {
 
 
 
+        let mut shndx_init_array = None;
+        let mut shndx_fini_array = None;
+        for (i, section) in collected.elf.sections.iter().enumerate() {
+            match section.header.shtype {
+                types::SectionType::INIT_ARRAY => {
+                    shndx_init_array = Some(i);
+                },
+                types::SectionType::FINI_ARRAY => {
+                    shndx_fini_array = Some(i);
+                },
+                _ => {}
+            }
+        }
+
         for sym in collected.symtab.iter_mut() {
             if let symbol::SymbolSectionIndex::Section(so) = sym.shndx {
                 let addr = collected.elf.sections[so as usize].header.addr;
@@ -301,12 +315,53 @@ impl DynamicRelocator {
                     collected.elf.header.entry = sym.value;
                 }
             }
-            if sym.name == b"_DYNAMIC" {
-                sym.stype   = types::SymbolType::OBJECT;
-                sym.bind    = types::SymbolBind::LOCAL;
-                sym.vis     = types::SymbolVis::DEFAULT;
-                sym.value   = collected.elf.sections[shndx_dynamic].header.addr;
-                sym.shndx   = symbol::SymbolSectionIndex::Section(shndx_dynamic as u16);
+            match sym.name.as_slice() {
+                b"_DYNAMIC" => {
+                    sym.stype   = types::SymbolType::OBJECT;
+                    sym.bind    = types::SymbolBind::LOCAL;
+                    sym.vis     = types::SymbolVis::DEFAULT;
+                    sym.value   = collected.elf.sections[shndx_dynamic].header.addr;
+                    sym.shndx   = symbol::SymbolSectionIndex::Section(shndx_dynamic as u16);
+                },
+                b"__init_array_start" => {
+                    if let Some(shndx_init_array) = shndx_init_array {
+                        sym.stype   = types::SymbolType::NOTYPE;
+                        sym.bind    = types::SymbolBind::LOCAL;
+                        sym.vis     = types::SymbolVis::DEFAULT;
+                        sym.value   = collected.elf.sections[shndx_init_array].header.addr;
+                        sym.shndx   = symbol::SymbolSectionIndex::Section(shndx_init_array as u16);
+                    }
+                },
+                b"__init_array_end" => {
+                    if let Some(shndx_init_array) = shndx_init_array {
+                        sym.stype   = types::SymbolType::NOTYPE;
+                        sym.bind    = types::SymbolBind::LOCAL;
+                        sym.vis     = types::SymbolVis::DEFAULT;
+                        sym.value   = collected.elf.sections[shndx_init_array].header.addr +
+                            collected.elf.sections[shndx_init_array].header.size;
+                        sym.shndx   = symbol::SymbolSectionIndex::Section(shndx_init_array as u16);
+                    }
+                },
+                b"__fini_array_start" => {
+                    if let Some(shndx_fini_array) = shndx_fini_array {
+                        sym.stype   = types::SymbolType::NOTYPE;
+                        sym.bind    = types::SymbolBind::LOCAL;
+                        sym.vis     = types::SymbolVis::DEFAULT;
+                        sym.value   = collected.elf.sections[shndx_fini_array].header.addr;
+                        sym.shndx   = symbol::SymbolSectionIndex::Section(shndx_fini_array as u16);
+                    }
+                },
+                b"__fini_array_end" => {
+                    if let Some(shndx_fini_array) = shndx_fini_array {
+                        sym.stype   = types::SymbolType::NOTYPE;
+                        sym.bind    = types::SymbolBind::LOCAL;
+                        sym.vis     = types::SymbolVis::DEFAULT;
+                        sym.value   = collected.elf.sections[shndx_fini_array].header.addr +
+                            collected.elf.sections[shndx_fini_array].header.size;
+                        sym.shndx   = symbol::SymbolSectionIndex::Section(shndx_fini_array as u16);
+                    }
+                },
+                _ => {},
             }
         }
 

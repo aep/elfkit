@@ -300,7 +300,12 @@ impl SymbolicLinker {
         while again {
             symtab_remap = vec![None;self.symtab.len()];
             let mut removelids = HashMap::new();
-            for (lid, _) in &self.objects {
+            for (lid, obj) in &self.objects {
+                //TODO yep yep, more hacks
+                if obj.section.header.shtype == types::SectionType::INIT_ARRAY ||
+                   obj.section.header.shtype == types::SectionType::FINI_ARRAY {
+                   continue;
+                }
                 removelids.insert(*lid, true);
             }
 
@@ -316,12 +321,14 @@ impl SymbolicLinker {
                         }
                     }
                 }
+
             }
 
             //TODO this feels like a hack. I think we should be able to mark root nodes before gc
             if let Some(i) = self.lookup.get(&(b"_start".to_vec())) {
                 removelids.insert(self.symtab[*i].obj, false);
             }
+
 
             again = false;
             for (lid, t) in removelids {
