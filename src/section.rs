@@ -5,7 +5,6 @@ use dynamic::Dynamic;
 use symbol::Symbol;
 use strtab::Strtab;
 use types;
-use std;
 
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::io::BufWriter;
@@ -280,19 +279,19 @@ impl Section {
                 unreachable!();
             },
             types::SectionType::STRTAB => {
-                let mut io = bb.as_slice();
+                let io = bb.as_slice();
                 Strtab::from_reader(io, linked, eh)?
             }
             types::SectionType::RELA => {
-                let mut io = bb.as_slice();
+                let io = bb.as_slice();
                 Relocation::from_reader(io, linked, eh)?
             }
             types::SectionType::SYMTAB | types::SectionType::DYNSYM => {
-                let mut io = bb.as_slice();
+                let io = bb.as_slice();
                 Symbol::from_reader(io, linked, eh)?
             }
             types::SectionType::DYNAMIC => {
-                let mut io = bb.as_slice();
+                let io = bb.as_slice();
                 Dynamic::from_reader(io, linked, eh)?
             }
             _ => {

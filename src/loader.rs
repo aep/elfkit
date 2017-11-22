@@ -6,7 +6,7 @@ extern crate rayon;
 
 use {types, Header, Elf, Error, symbol, filetype, relocation, section};
 use std;
-use std::io::{Read, Seek, Cursor, BufReader, SeekFrom};
+use std::io::{Read, Seek, Cursor};
 use std::hash::{Hash,Hasher};
 use std::fs::{File};
 use std::collections::HashMap;
@@ -100,7 +100,7 @@ impl State {
                 }
                 return false;
             },
-            &mut State::Elf{ref elf, ref bloom, ref symbols, ..} => {
+            &mut State::Elf{ref bloom, ref symbols, ..} => {
                 if bloom.contains(&needle_hash) {
                     for sym in symbols.iter() {
                         match sym.bind {
@@ -194,7 +194,7 @@ impl State {
                 }
 
                 let mut relocs : HashMap<usize, Vec<relocation::Relocation>> = HashMap::new();
-                for (i, sec) in elf.sections.iter_mut().enumerate() {
+                for sec in elf.sections.iter_mut() {
                     if sec.header.shtype == types::SectionType::RELA {
                         relocs.insert(sec.header.info as usize,
                                     std::mem::replace(sec, section::Section::default())

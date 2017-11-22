@@ -4,14 +4,11 @@ extern crate colored;
 extern crate byteorder;
 
 use std::env;
-use elfkit::{Elf, Header, types, symbol, relocation, section, Error, loader, linker, dynamic, segment};
-use elfkit::symbolic_linker::{self, SymbolicLinker};
-use std::fs::File;
+use elfkit::{Elf, Header, types, symbol, relocation, section, Error, loader, dynamic};
+use elfkit::symbolic_linker::{SymbolicLinker};
 use self::ordermap::{OrderMap};
 use std::collections::hash_map::{self,HashMap};
 use std::fs::OpenOptions;
-use std::io::Write;
-use std::iter::FromIterator;
 use std::os::unix::fs::PermissionsExt;
 use colored::*;
 
@@ -29,7 +26,6 @@ fn main() {
 
     let mut elf = match elf.header.etype {
         types::ElfType::DYN => {
-            let rootsym = env::args().nth(1).unwrap().into_bytes();
             loader.push(loader::State::Object{
                 name:     String::from("___linker_entry"),
                 symbols:  vec![symbol::Symbol{
@@ -51,38 +47,6 @@ fn main() {
             println!("lookup complete: {} nodes in link tree", linker.objects.len());
             linker.gc();
             println!("  after gc: {}", linker.objects.len());
-    let mut file = File::create("link.dot").unwrap();
-    writeln!(&mut file, "digraph link{{").unwrap();
-    writeln!(&mut file, "    node[shape=record]").unwrap();
-    writeln!(&mut file, "
-    Legend [pos=\"1,1\", pin=true, shape=none, margin=0, label=<
-        <table border=\"2\" cellborder=\"1\" cellspacing=\"0\" cellpadding=\"4\">
-            <tr>
-                <td colspan=\"2\"><b>Legend</b></td>
-            </tr>
-            <tr>
-                <td bgcolor=\"red\">Red</td>
-                <td>UNDEF</td>
-            </tr>
-            <tr>
-                <td >Regular line</td>
-                <td>GLOBAL</td>
-            </tr>
-            <tr>
-                <td>Dashed line</td>
-                <td>WEAK</td>
-            </tr>
-            <tr>
-                <td>Dotted line</td>
-                <td>COMMON</td>
-            </tr>
-        </table>
-    >];
-    ").unwrap();
-
-    linker.write_graphviz(&mut file).unwrap();
-
-    writeln!(&mut file, "}}").unwrap();
 
             elf.sections.push(section::Section::default());
             let mut dl = args.dynamic_linker.into_bytes();
@@ -96,7 +60,7 @@ fn main() {
             let mut collected = SimpleCollector::new(elf).collect(linker).into_collected();
             DynamicRelocator::relocate(&mut collected).unwrap();
             let mut elf = collected.into_elf();
-            elf.make_symtab_gnuld_compat();
+            elf.make_symtab_gnuld_compat().unwrap();
             elf.layout().unwrap();
             elf
         },
@@ -108,7 +72,7 @@ fn main() {
             let mut collected = SimpleCollector::new(elf).collect(linker).into_collected();
             DynamicRelocator::relocate(&mut collected).unwrap();
             let mut elf = collected.into_elf();
-            elf.make_symtab_gnuld_compat();
+            elf.make_symtab_gnuld_compat().unwrap();
             elf.layout().unwrap();
             elf
         },
@@ -131,13 +95,13 @@ struct DynamicRelocator {
 impl DynamicRelocator {
     pub fn relocate (collected: &mut Collected) -> Result<(), Error>  {
 
-        let mut shndx_com = collected.elf.sections.len();
+        let shndx_com = collected.elf.sections.len();
         collected.elf.sections.push(section::Section::new(b".com".to_vec(),
         types::SectionType::NOBITS, types::SectionFlags::ALLOC | types::SectionFlags::WRITE,
         section::SectionContent::None, 0, 0));
         collected.elf.sections[shndx_com].header.addralign = 16;
 
-        let mut shndx_got = collected.elf.sections.len();
+        let shndx_got = collected.elf.sections.len();
         collected.elf.sections.push(section::Section::new(b".got".to_vec(),
         //musl's dalias basically said got must be writeable. i disagree and gnuld seems to do
         //relocs before protection, so lots more stuff can do read only, but whatever
@@ -249,7 +213,7 @@ impl DynamicRelocator {
 
         collected.elf.sections[shndx_got].content = section::SectionContent::Raw(got);
 
-        let mut shndx_dynstr = collected.elf.sections.len();
+        let shndx_dynstr = collected.elf.sections.len();
         collected.elf.sections.push(section::Section::new(b".dynstr".to_vec(),
         types::SectionType::STRTAB, types::SectionFlags::ALLOC,
         section::SectionContent::Strtab(elfkit::strtab::Strtab::default()), 0, 0));
@@ -307,7 +271,7 @@ impl DynamicRelocator {
 
 
         for sym in collected.symtab.iter_mut() {
-            if let symbol::SymbolSectionIndex::Section(mut so) = sym.shndx {
+            if let symbol::SymbolSectionIndex::Section(so) = sym.shndx {
                 let addr = collected.elf.sections[so as usize].header.addr;
                 sym.value += addr;
                 if sym.name == b"_start" && sym.bind == types::SymbolBind::GLOBAL {
@@ -348,13 +312,13 @@ impl DynamicRelocator {
             match reloc.rtype {
                 relocation::RelocationType::R_X86_64_PC32 => {
                     let vaddr = collected.elf.sections[shndx].header.addr + reloc.addr;
-                    let mut rv = ((sym.value as i64) + (reloc.addend as i64) - (vaddr as i64)) as i32;
+                    let rv = ((sym.value as i64) + (reloc.addend as i64) - (vaddr as i64)) as i32;
 
                     if sym.value == 0 {
                         println!("warning: relative reloc to undefined symbol {:?} -> {:?}",  reloc, sym);
                     }
 
-                    let mut w = match collected.elf.sections[shndx].content.as_raw_mut() {
+                    let w = match collected.elf.sections[shndx].content.as_raw_mut() {
                         Some(v) => v.as_mut_slice(),
                         None => {
                             panic!("relocation {:?} against non-raw section {} makes no sense",
@@ -495,11 +459,10 @@ impl Collected {
         section::SectionContent::Symbols(self.symtab),
         sh_index_strtab as u32, first_global_symtab as u32));
 
-        for (mut shndx, relocs) in self.relocs {
+        for (shndx, relocs) in self.relocs {
             let mut name = b".rela".to_vec();
             name.append(&mut self.elf.sections[shndx].name.clone());
 
-            let sh_index_strtab = self.elf.sections.len();
             self.elf.sections.push(section::Section::new(name, types::SectionType::RELA,
                                                               types::SectionFlags::empty(),
                                                               section::SectionContent::Relocations(relocs), sh_index_symtab as u32, shndx as u32));
@@ -586,7 +549,7 @@ impl SimpleCollector {
 
         let mut input_map = HashMap::new();
 
-        for (_, mut object) in linker.objects {
+        for (_, object) in linker.objects {
             let (nu_shndx, nu_off) = self.merge(object.section, object.relocs, object.name);
             input_map.insert(object.lid, (nu_shndx, nu_off));
         }
@@ -599,7 +562,7 @@ impl SimpleCollector {
                             panic!("linker emitted dangling link {} -> {:?}", loc.obj, loc.sym);
                         },
                         Some(&(nu_shndx, nu_off)) =>  {
-                            if let symbol::SymbolSectionIndex::Section(so) = loc.sym.shndx {
+                            if let symbol::SymbolSectionIndex::Section(_) = loc.sym.shndx {
                                 loc.sym.shndx = symbol::SymbolSectionIndex::Section(nu_shndx as u16);
                                 loc.sym.value += nu_off as u64;
                             }
@@ -617,23 +580,10 @@ impl SimpleCollector {
             }
         }
 
-        //FIXME the relas contain links to sections which are broken here
-        /*
-        let mut secs_bss    = Vec::new();
-        let mut secs_rest   = Vec::new();
-        for s in self.sections.drain(..) {
-            if s.1.header.shtype == types::SectionType::NOBITS {
-                secs_bss.push(s.1);
-                continue;
-            }
-            secs_rest.push(s.1);
-        }
-        self.elf.sections = secs_rest.into_iter().chain(secs_bss.into_iter()).collect();
-        */
         self
     }
 
-    fn merge(&mut self, mut sec: section::Section, mut rela: Vec<relocation::Relocation>, objname: String) -> (usize, usize) {
+    fn merge(&mut self, mut sec: section::Section, rela: Vec<relocation::Relocation>, objname: String) -> (usize, usize) {
 
         let mut name = sec.name.clone();
         if name.len() > 3 && &name[0..4] == b".bss" {

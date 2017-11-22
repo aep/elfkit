@@ -8,7 +8,7 @@ use section;
 use segment;
 
 use ordermap::{OrderMap};
-use std::collections::hash_map::{self,HashMap};
+use std::collections::hash_map::{HashMap};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std;
 use std::iter::FromIterator;
@@ -235,13 +235,13 @@ impl Elf {
     /// - reorder symbols to have GLOBAL last
     /// - remove original SECTION symbols and add offset to reloc addend instead
     /// - insert new symbol sections on the top
-    pub fn make_symtab_gnuld_compat(&mut self) {
+    pub fn make_symtab_gnuld_compat(&mut self) -> Result<(), Error> {
         for i in 0..self.sections.len() {
             if self.sections[i].header.shtype == types::SectionType::SYMTAB {
                 self._make_symtab_gnuld_compat(i);
             }
         }
-        self.sync_all();
+        self.sync_all()
     }
 
     fn _make_symtab_gnuld_compat(&mut self, shndx: usize) {
@@ -263,7 +263,7 @@ impl Elf {
 
         let mut symtab_gs = Vec::new();
         let mut symtab_ls = Vec::new();
-        for (oi,mut sym) in symtab_remap {
+        for (oi,sym) in symtab_remap {
             if sym.bind == types::SymbolBind::GLOBAL {
                 symtab_gs.push((oi, sym));
             } else {
@@ -304,10 +304,10 @@ impl Elf {
             vis:    types::SymbolVis::DEFAULT,
             _name:  0,
         }));
-        original_size += 1;
+        //original_size += 1;
 
 
-        let mut symtab_remap : OrderMap<usize, symbol::Symbol>
+        let symtab_remap : OrderMap<usize, symbol::Symbol>
             = OrderMap::from_iter(symtab_ls.into_iter().chain(symtab_gs.into_iter()));
 
         for sec in &mut self.sections {
@@ -335,7 +335,7 @@ impl Elf {
         }
 
         self.sections[shndx].content = section::SectionContent::Symbols(
-            symtab_remap.into_iter().map(|(k,v)|v).collect());
+            symtab_remap.into_iter().map(|(_,v)|v).collect());
     }
 
 
@@ -353,7 +353,7 @@ impl Elf {
         }
 
 
-        reorder.sort_by(|&(i1,ref s1),&(i2,ref s2)|{
+        reorder.sort_by(|&(_,ref s1),&(_,ref s2)|{
             if s1.header.shtype != s2.header.shtype {
                 if s1.header.shtype == types::SectionType::NOBITS {
                     return std::cmp::Ordering::Greater;
@@ -412,11 +412,11 @@ impl Elf {
     pub fn layout(self: &mut Elf) -> Result<(), Error> {
         self.sync_all()?;
 
-        let mut dbg_old_segments_count = self.segments.len();
+        let dbg_old_segments_count = self.segments.len();
 
         self.segments.clear();
 
-        println!("\nstart of Elf::layout segmentation");
+        //println!("\nstart of Elf::layout segmentation");
 
         let mut current_load_segment_flags = types::SegmentFlags::READABLE;
         let mut current_load_segment_poff = 0;
@@ -429,15 +429,15 @@ impl Elf {
 
         let mut dbg_old_addresses = vec![self.sections[0].header.addr];
 
-        println!("   name     \tsize\tpoff\tvoff\tpstart\tvstart\tflags");
+        //println!("   name     \tsize\tpoff\tvoff\tpstart\tvstart\tflags");
         for (shndx, sec)  in self.sections.iter_mut().enumerate().skip(1) {
             dbg_old_addresses.push(sec.header.addr);
 
-            println!(" > {:<10.10}\t{}\t{}\t{}\t{}\t{}\t{:?}", 
-                     String::from_utf8_lossy(&sec.name), sec.header.size, poff, voff, 
-                     current_load_segment_pstart,
-                     current_load_segment_vstart,
-                     current_load_segment_flags);
+            //println!(" > {:<10.10}\t{}\t{}\t{}\t{}\t{}\t{:?}", 
+            //         String::from_utf8_lossy(&sec.name), sec.header.size, poff, voff, 
+            //         current_load_segment_pstart,
+            //         current_load_segment_vstart,
+            //         current_load_segment_flags);
 
             if sec.header.addralign > 0 {
                 let oa = poff % sec.header.addralign;
@@ -453,7 +453,7 @@ impl Elf {
                            String::from_utf8_lossy(&sec.name));
                 }
                 if (voff - poff) % 0x200000 != 0 {
-                    println!("   ^ causes segmentation by load alignment");
+                    //println!("   ^ causes segmentation by load alignment");
                     if sec.header.flags.contains(types::SectionFlags::EXECINSTR) {
                         current_load_segment_flags.insert(types::SegmentFlags::EXECUTABLE);
                     }
@@ -490,7 +490,7 @@ impl Elf {
                 if sec.header.flags.contains(types::SectionFlags::WRITE) !=
                 current_load_segment_flags.contains(types::SegmentFlags::WRITABLE) {
                     if current_load_segment_voff >  current_load_segment_vstart || shndx == 1 {
-                        println!("   ^ causes segmentation by protection change");
+                        //println!("   ^ causes segmentation by protection change");
                         self.segments.push(segment::SegmentHeader {
                             phtype: types::SegmentType::LOAD,
                             flags:  current_load_segment_flags,
@@ -506,9 +506,9 @@ impl Elf {
                         current_load_segment_vstart = voff;
                         current_load_segment_flags = types::SegmentFlags::READABLE;
                     } else {
-                        println!("   ^ segmentation protection change supressed because it would be empty \
-                                 voff {} <= vstart {}",
-                                 current_load_segment_voff, current_load_segment_vstart);
+                        //println!("   ^ segmentation protection change supressed because it would be empty \
+                        //         voff {} <= vstart {}",
+                        //         current_load_segment_voff, current_load_segment_vstart);
                     }
 
                     if sec.header.flags.contains(types::SectionFlags::WRITE) {
@@ -561,7 +561,7 @@ impl Elf {
             }
         }
         if current_load_segment_voff >  current_load_segment_vstart {
-            println!("   > segmentation caused by end of sections");
+            //println!("   > segmentation caused by end of sections");
             self.segments.push(segment::SegmentHeader {
                 phtype: types::SegmentType::LOAD,
                 flags:  current_load_segment_flags,
@@ -611,7 +611,7 @@ impl Elf {
             align:  0x8,
         });
 
-        println!("done {} segments", self.segments.len());
+        //println!("done {} segments", self.segments.len());
 
         for i in 0..self.sections.len() {
             if self.sections[i].addrlock && self.sections[i].header.addr != dbg_old_addresses[i] {

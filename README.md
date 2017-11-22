@@ -23,7 +23,7 @@ musl-gcc -fuse-ld=gold main.c
 there's also a prettier version of readelf showing of parsing capabilities
 
 ```
-cargo run --example readelf ./tests/samples/amd64_exe
+cargo run --bin readelf /bin/sh | less
 ```
 
 ![screenshot](/bin/readelf-screenshot.png?raw=true)
@@ -32,12 +32,10 @@ cargo run --example readelf ./tests/samples/amd64_exe
 modular linker toolkit
 ---------------------
 
-Loader: loads elf objects from disk
-Linker: produces a link graph of sections from a loader
-Layout: bakes multiple sections into a single object
-
-
-
+- Loader:       loads elf objects from disk
+- Linker:       produces a link graph of sections from a loader
+- Collector:    bakes multiple sections into a single object
+- Relocator:    applies relocations to a combined object
 
 
 implementation status
@@ -59,11 +57,11 @@ section specific parsers
 
 architectures
 
-| abi          | headers | relocations    |
-|--------------|---------|----------------|
-| x86_64       | ok      | minimum viable |
-| mips32r2 o32 | ok      |                |
-| arm eabi     | ok      |                |
+| abi          | headers | linker |
+|--------------|---------|--------|
+| x86_64       | ok      | ok     |
+| mips32r2 o32 | ok      |        |
+| arm eabi     | ok      |        |
 
 
 alternatives

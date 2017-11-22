@@ -13,7 +13,6 @@ pub mod elf;
 pub mod error;
 pub mod filetype;
 pub mod header;
-pub mod linker;
 pub mod loader;
 pub mod symbolic_linker;
 pub mod relocation;

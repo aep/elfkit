@@ -1,10 +1,9 @@
 extern crate ordermap;
 
-use {Elf, Header, types, symbol, relocation, section, Error};
+use {Header, types, symbol, relocation, section, Error};
 use std;
 use std::io::Write;
 use std::collections::hash_map::{self, HashMap};
-use self::ordermap::{OrderMap};
 use loader::{self, Loader};
 use std::sync::atomic::{self, AtomicUsize};
 
@@ -46,7 +45,7 @@ pub struct SymbolicLinker {
 }
 
 impl SymbolicLinker {
-    pub fn link_all(&mut self, mut loader: Vec<loader::State>) -> Result<(), Error> {
+    pub fn link_all(&mut self, loader: Vec<loader::State>) -> Result<(), Error> {
         let loader = loader.load_all(&|e,name| {
             println!("elfkit::Linker {:?} while loading {}", e, name);
             Vec::with_capacity(0)
@@ -301,7 +300,7 @@ impl SymbolicLinker {
         while again {
             symtab_remap = vec![None;self.symtab.len()];
             let mut removelids = HashMap::new();
-            for (lid, obj) in &self.objects {
+            for (lid, _) in &self.objects {
                 removelids.insert(*lid, true);
             }
 
@@ -351,7 +350,7 @@ impl SymbolicLinker {
             }
         }
 
-        for (lid, obj) in &mut self.objects {
+        for (_, obj) in &mut self.objects {
             for reloc in &mut obj.relocs {
                 reloc.sym = symtab_remap[reloc.sym as usize]
                     .expect("bug in elfkit: dangling reloc after gc") as u32;
@@ -367,7 +366,8 @@ impl SymbolicLinker {
 
         for (lid, object) in self.objects.iter() {
 
-            writeln!(file, "    o{}[group=g{}, label=\"<f0>{}|<f1> {}\"];", lid, object.oid, object.oid, object.name);
+            writeln!(file, "    o{}[group=g{}, label=\"<f0>{}|<f1> {}\"];",
+                     lid, object.oid, object.oid, object.name)?;
 
 
             for reloc in &object.relocs {
@@ -376,7 +376,7 @@ impl SymbolicLinker {
                 if link.obj != object.lid {
                     let mut style  = String::new();
                     let mut linkto = format!("o{}", link.obj);
-                    let mut label  = String::from_utf8_lossy(&link.sym.name).to_owned();
+                    let label  = String::from_utf8_lossy(&link.sym.name).to_owned();
 
                     if link.sym.bind == types::SymbolBind::WEAK {
                         style = String::from(", style=\"dashed\"");

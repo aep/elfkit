@@ -3,7 +3,6 @@ use std::io::{Read, Write};
 use std::io::BufWriter;
 use error::Error;
 use types;
-use byteorder::{LittleEndian, BigEndian, ReadBytesExt};
 
 #[derive(Debug,Clone)]
 pub struct Header {

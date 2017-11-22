@@ -2,7 +2,6 @@ use std::io::{Read, Write};
 use {Error, Header, SectionContent};
 use types;
 use num_traits::{FromPrimitive, ToPrimitive};
-use symbol::Symbol;
 
 /*
 A Represents the addend used to compute the value of the relocatable field.

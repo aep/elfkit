@@ -129,6 +129,7 @@ macro_rules! elf_dispatch_endianness {
         use std;
         match $header.ident_endianness {
             types::Endianness::LittleEndian => {
+                #[allow(dead_code)]
                 type DispatchedEndian = byteorder::LittleEndian;
                 #[allow(dead_code)]
                 fn read_u16<R:ReadBytesExt>(r: &mut R) -> std::io::Result<u16> {
@@ -145,6 +146,7 @@ macro_rules! elf_dispatch_endianness {
                 $block
             },
             types::Endianness::BigEndian => {
+                #[allow(dead_code)]
                 type DispatchedEndian = byteorder::BigEndian;
                 #[allow(dead_code)]
                 fn read_u16<R:ReadBytesExt>(r: &mut R) -> std::io::Result<u16> {
