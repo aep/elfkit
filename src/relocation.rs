@@ -69,9 +69,9 @@ pub enum RelocationType {
     R_X86_64_TLSGD = 19, // word32
 
     /// PC Relative address to the tls_index structure in the GOT
-    /// in local dynamic model
-    /// the local dynamic model seems even more drepperesque and i haven't seen
-    /// it used yet
+    /// in local dynamic model.  that index only contains the module id,
+    /// since the offset is known at link time and will be accessed via
+    /// R_X86_64_DTPOFF32
     R_X86_64_TLSLD = 20, // word32
 
     /// Offset of the symbol in TLS Block (local dynamic model)

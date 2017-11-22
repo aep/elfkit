@@ -189,6 +189,7 @@ impl DynamicRelocator {
                     },
 
                     // general dynamic model
+                    relocation::RelocationType::R_X86_64_TLSLD |
                     relocation::RelocationType::R_X86_64_TLSGD => {
                         if sym.stype != types::SymbolType::TLS {
                             //says drepper's paper at least. but then again i have no idea wtf the
@@ -199,9 +200,8 @@ impl DynamicRelocator {
                             hash_map::Entry::Occupied(e) => *e.get(),
                             hash_map::Entry::Vacant(e) => {
                                 let got_slot = got.len();
-                                // the module id. it's always 1
+                                // the module id. it's always 1 for us
                                 elf_write_u64!(&collected.elf.header, got, 1)?;
-                                // the offset into tdata
                                 elf_write_u64!(&collected.elf.header, got, sym.value)?;
 
                                 let tls_sym = collected.symtab.len();
@@ -220,8 +220,13 @@ impl DynamicRelocator {
                                 tls_sym
                             },
                         };
+
                         reloc.sym = tls_sym as u32;
                         reloc.rtype = relocation::RelocationType::R_X86_64_PC32;
+                        hrel.push((shndx, reloc));
+                    },
+                    relocation::RelocationType::R_X86_64_DTPOFF32 => {
+                        reloc.rtype = relocation::RelocationType::R_X86_64_32;
                         hrel.push((shndx, reloc));
                     },
                     _ => {
@@ -411,6 +416,19 @@ impl DynamicRelocator {
 
                     let mut w = &mut w[reloc.addr as usize ..];
                     elf_write_u32!(&collected.elf.header, w, rv as u32)?;
+                },
+                relocation::RelocationType::R_X86_64_32 => {
+                    let w = match collected.elf.sections[shndx].content.as_raw_mut() {
+                        Some(v) => v.as_mut_slice(),
+                        None => {
+                            panic!("relocation {:?} against non-raw section {} makes no sense",
+                                   reloc, shndx);
+                        }
+                    };
+                    let value = sym.value as i64 + reloc.addend;
+                    let mut w = &mut w[reloc.addr as usize ..];
+                    println!("writing {:x} to {:x}", value, reloc.addr);
+                    elf_write_u32!(&collected.elf.header, w, value as u32)?;
                 },
                 _ => unreachable!(),
             }

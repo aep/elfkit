@@ -10,8 +10,8 @@ all: $(OUTPUTS)
 clean:
 	rm -f $(OUTPUTS)
 
-CFLAGS=-fPIC -g
-LDFLAGS=--emit-relocs -pie -dynamic-linker /lib64/ld-linux-x86-64.so.2
+CFLAGS+=-fPIC -g
+LDFLAGS+=--emit-relocs -pie -dynamic-linker /lib64/ld-linux-x86-64.so.2
 
 
 %.o: %.asm
