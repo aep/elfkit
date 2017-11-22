@@ -115,6 +115,7 @@ impl DynamicRelocator {
         let mut hrel        = Vec::new();
         let mut got         = Vec::new();
         let mut sym2got     = HashMap::new();
+        let mut sym2tls     = HashMap::new();
 
         for (shndx, relocs) in collected.relocs.drain() {
             for mut reloc in relocs {
@@ -182,27 +183,46 @@ impl DynamicRelocator {
                         reloc.sym = got_sym as u32;
                         reloc.rtype = relocation::RelocationType::R_X86_64_PC32;
                         hrel.push((shndx, reloc));
-
-                        /*
-                        let vaddr = elf.sections[relocsec.header.info as usize].header.addr + reloc.addr;
-                        let rv = ((got_slot as i64) + (reloc.addend as i64) - (vaddr as i64)) as i32;
-                        let w = elf.sections[relocsec.header.info as usize].content.as_raw_mut()
-                            .unwrap().as_mut_slice();
-
-                        if reloc.addr > w.len() as u64 {
-                            panic!("relocation {} {:?} against section {} would exceed its size of {} bytes",
-                                   String::from_utf8_lossy(&relocsec.name),
-                                   reloc,
-                                   relocsec.header.info,
-                                   w.len());
-                        }
-
-                        let mut w = &mut w[reloc.addr as usize ..];
-                        elf_write_u32!(&elf.header, w, rv as u32)?;
-                        */
                     },
                     relocation::RelocationType::R_X86_64_32 | relocation::RelocationType::R_X86_64_32S => {
                         println!("unsupported relocation. maybe missing -fPIC ? {:?} -> {:?}", reloc, sym);
+                    },
+
+                    // general dynamic model
+                    relocation::RelocationType::R_X86_64_TLSGD => {
+                        if sym.stype != types::SymbolType::TLS {
+                            //says drepper's paper at least. but then again i have no idea wtf the
+                            //TLS symbol is for anyway. this check could be removed i guess.
+                            panic!("relocation {:?} cannot be used against non-tls symbol {:?}", reloc, sym);
+                        }
+                        let tls_sym = match sym2tls.entry(reloc.sym) {
+                            hash_map::Entry::Occupied(e) => *e.get(),
+                            hash_map::Entry::Vacant(e) => {
+                                let got_slot = got.len();
+                                // the module id. it's always 1
+                                elf_write_u64!(&collected.elf.header, got, 1)?;
+                                // the offset into tdata
+                                elf_write_u64!(&collected.elf.header, got, sym.value)?;
+
+                                let tls_sym = collected.symtab.len();
+                                collected.symtab.push(symbol::Symbol{
+                                    shndx:  symbol::SymbolSectionIndex::Section(shndx_got as u16),
+                                    value:  got_slot as u64,
+                                    size:   16,
+                                    name:   [&sym.name[..], b"__TLS_GOT"].concat(),
+                                    stype:  types::SymbolType::OBJECT,
+                                    bind:   types::SymbolBind::GLOBAL,
+                                    vis:    types::SymbolVis::DEFAULT,
+                                    _name:  0,
+                                });
+
+                                e.insert(tls_sym);
+                                tls_sym
+                            },
+                        };
+                        reloc.sym = tls_sym as u32;
+                        reloc.rtype = relocation::RelocationType::R_X86_64_PC32;
+                        hrel.push((shndx, reloc));
                     },
                     _ => {
                         panic!("elfkit::StaticRelocator relocation not implemented {:?}", reloc);
@@ -273,7 +293,10 @@ impl DynamicRelocator {
         for sym in collected.symtab.iter_mut() {
             if let symbol::SymbolSectionIndex::Section(so) = sym.shndx {
                 let addr = collected.elf.sections[so as usize].header.addr;
-                sym.value += addr;
+
+                if sym.stype != types::SymbolType::TLS {
+                    sym.value += addr;
+                }
                 if sym.name == b"_start" && sym.bind == types::SymbolBind::GLOBAL {
                     collected.elf.header.entry = sym.value;
                 }

@@ -530,6 +530,19 @@ impl Elf {
                 current_load_segment_poff = poff;
                 current_load_segment_voff = voff;
 
+                if sec.header.flags.contains(types::SectionFlags::TLS) {
+                    self.segments.push(segment::SegmentHeader {
+                        phtype: types::SegmentType::TLS,
+                        flags:  current_load_segment_flags,
+                        offset: sec.header.offset,
+                        filesz: sec.header.size,
+                        vaddr:  sec.header.addr,
+                        paddr:  sec.header.addr,
+                        memsz:  sec.header.size,
+                        align:  sec.header.addralign,
+                    });
+                }
+
                 match sec.name.as_slice() {
                     b".dynamic" => {
                         self.segments.push(segment::SegmentHeader {
