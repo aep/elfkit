@@ -188,7 +188,7 @@ impl DynamicRelocator {
                         println!("unsupported relocation. maybe missing -fPIC ? {:?} -> {:?}", reloc, sym);
                     },
 
-                    // general dynamic model
+                    relocation::RelocationType::R_X86_64_GOTTPOFF |
                     relocation::RelocationType::R_X86_64_TLSLD |
                     relocation::RelocationType::R_X86_64_TLSGD => {
                         if sym.stype != types::SymbolType::TLS {
@@ -200,15 +200,59 @@ impl DynamicRelocator {
                             hash_map::Entry::Occupied(e) => *e.get(),
                             hash_map::Entry::Vacant(e) => {
                                 let got_slot = got.len();
-                                // the module id. it's always 1 for us
-                                elf_write_u64!(&collected.elf.header, got, 1)?;
-                                elf_write_u64!(&collected.elf.header, got, sym.value)?;
+
+                                let gotsize = match reloc.rtype {
+                                    relocation::RelocationType::R_X86_64_TLSGD => {
+                                        elf_write_u64!(&collected.elf.header, got, 1)?;
+                                        elf_write_u64!(&collected.elf.header, got, sym.value)?;
+                                        16
+                                    },
+                                    relocation::RelocationType::R_X86_64_TLSLD => {
+                                        elf_write_u64!(&collected.elf.header, got, 1)?;
+                                        //The offset is already added by the compiler,
+                                        //so the offset in the tls entry must be 0.
+                                        //TODO but what's the point of all of this if it's always 0?
+                                        //i must still be missing something.
+                                        elf_write_u64!(&collected.elf.header, got, 0)?;
+                                        16
+                                    },
+                                    relocation::RelocationType::R_X86_64_GOTTPOFF => {
+                                        //TODO: this is entirely guesswork since it's not documented clearly
+                                        //tdata comes exactly before %fs on x86_64, like so:
+                                        //
+                                        //     -200 [ module 2 .tdata ]
+                                        //     -100 [ module 1 .tdata ]
+                                        //     0    $fs
+                                        //
+                                        // so a symbol value 10 in module 1 is 10 - 100 = -90.
+                                        // (this example ignores alignment)
+                                        //
+                                        let shndx_tdata = match sym.shndx {
+                                            symbol::SymbolSectionIndex::Section(shndx) => shndx,
+                                            _ => panic!("relocation against garbage symbol {:?} -> {:?}",
+                                                        reloc, sym),
+                                        };
+
+                                        let mut tlx = collected.elf.sections[shndx_tdata as usize].header.size;
+                                        let align = collected.elf.sections[shndx_tdata as usize].header.addralign;
+                                        if tlx % align > 0 {
+                                            tlx += align - (tlx % align);
+                                        }
+                                        tlx -= sym.value;
+                                        let tlx = -(tlx as i64);
+
+                                        elf_write_u64!(&collected.elf.header, got, tlx as u64)?;
+                                        8
+                                    }
+                                    _ => unreachable!(),
+                                };
+
 
                                 let tls_sym = collected.symtab.len();
                                 collected.symtab.push(symbol::Symbol{
                                     shndx:  symbol::SymbolSectionIndex::Section(shndx_got as u16),
                                     value:  got_slot as u64,
-                                    size:   16,
+                                    size:   gotsize,
                                     name:   [&sym.name[..], b"__TLS_GOT"].concat(),
                                     stype:  types::SymbolType::OBJECT,
                                     bind:   types::SymbolBind::GLOBAL,
@@ -221,6 +265,7 @@ impl DynamicRelocator {
                             },
                         };
 
+
                         reloc.sym = tls_sym as u32;
                         reloc.rtype = relocation::RelocationType::R_X86_64_PC32;
                         hrel.push((shndx, reloc));
@@ -230,7 +275,11 @@ impl DynamicRelocator {
                         hrel.push((shndx, reloc));
                     },
                     _ => {
-                        panic!("elfkit::StaticRelocator relocation not implemented {:?}", reloc);
+                        panic!("relocating {:?} of '{}' in '{}' not implemented",
+                               reloc.rtype,
+                               String::from_utf8_lossy(&sym.name),
+                               String::from_utf8_lossy(&collected.elf.sections[shndx].name),
+                              );
                     }
                 }
             }

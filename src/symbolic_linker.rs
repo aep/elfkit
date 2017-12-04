@@ -301,6 +301,7 @@ impl SymbolicLinker {
             symtab_remap = vec![None;self.symtab.len()];
             let mut removelids = HashMap::new();
             for (lid, obj) in &self.objects {
+
                 //TODO yep yep, more hacks
                 if obj.section.header.shtype == types::SectionType::INIT_ARRAY ||
                    obj.section.header.shtype == types::SectionType::FINI_ARRAY {
@@ -310,6 +311,11 @@ impl SymbolicLinker {
             }
 
             for (lid, obj) in &self.objects {
+                //TODO oh look, more hacks
+                if obj.section.name.starts_with(b".debug_") {
+                    continue;
+                }
+
                 for reloc in &obj.relocs {
                     symtab_remap[reloc.sym as usize] = Some(0);
 

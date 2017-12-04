@@ -78,14 +78,13 @@ pub enum RelocationType {
     R_X86_64_DTPOFF32 = 21, // word32
 
 
-    /// PC Relative offset of symbol in GOT in initial exec model
-    /// drepper says this is emitted by the linker, and processed by the dynamic linker
-    /// but that doesnt make any sense, since the initial exec model assumes
-    /// that everything is in the same object anyway, so the linker knows the offset.
-    /// more likely this is emitted by the compiler.
+    /// in initial exec model, this is a PC Relative offset to a GOT entry
+    /// which contains the 32bit offset into the thread local block.
+    /// this is emitted by the compiler when the thread local var will definately
+    /// be inside the executable.
     R_X86_64_GOTTPOFF = 22, // word32
 
-    /// offset in initial TLS entry
+    /// for initial exec model, this is the reloc on the GOT entry.
     R_X86_64_TPOFF32 = 23, // word32
 
     R_X86_64_PC64 = 24,            // word64 S + A - P
@@ -99,7 +98,7 @@ pub enum RelocationType {
     R_X86_64_IRELATIVE = 37,       // wordclass indirect (B + A)
     R_X86_64_RELATIVE64 = 38,      // word64 B + A
 
-    //hopefully these are ok to be treated as R_X86_64_GOTPCREL
+    //not documented. hopefully these are ok to be treated as R_X86_64_GOTPCREL
     R_X86_64_GOTPCRELX = 41,     // word32 G + GOT + A - P
     R_X86_64_REX_GOTPCRELX = 42, //word32 G + GOT + A - P
 }
