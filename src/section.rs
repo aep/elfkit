@@ -102,6 +102,18 @@ impl SectionContent {
             _ => None,
         }
     }
+    pub fn as_dynamic(&self) -> Option<&Vec<Dynamic>> {
+        match self {
+            &SectionContent::Dynamic(ref v) => Some(v),
+            _ => None,
+        }
+    }
+    pub fn into_dynamic(self) -> Option<Vec<Dynamic>> {
+        match self {
+            SectionContent::Dynamic(v) => Some(v),
+            _ => None,
+        }
+    }
     pub fn as_strtab_mut(&mut self) -> Option<&mut Strtab> {
         match self {
             &mut SectionContent::Strtab(ref mut v) => Some(v),
