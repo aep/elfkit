@@ -20,3 +20,6 @@ clean:
 	done
 
 
+# travis is ubuntu, which is so hopless garbage, i can't be bothered
+travis:
+	rm -rf cpp-hello

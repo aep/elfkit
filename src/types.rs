@@ -986,6 +986,7 @@ pub enum DynamicType {
     MIPS_GOTSYM = 0x70000013,
     MIPS_HIPAGENO = 0x70000014,
     MIPS_RLD_MAP = 0x70000016,
+    MIPS_RLD_MAP_REL = 0x70000035,
 }
 
 

@@ -743,6 +743,11 @@ impl SimpleCollector {
         if name.len() > 4 && &name[0..5] == b".text" {
             name = b".text".to_vec();
         }
+        if name.len() > 5 && &name[0..6] == b".tdata" {
+            name = b".tdata".to_vec();
+        }
+
+        sec.header.flags.remove(types::SectionFlags::GROUP);
 
         let (nu_shndx, nu_off) = match self.sections.entry(name.clone()) {
             ordermap::Entry::Occupied(mut e) => {

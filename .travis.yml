@@ -8,4 +8,4 @@ addons:
 script:
   - cargo build --verbose --all
   - cargo test
-  - cd $TRAVIS_BUILD_DIR/tests/linker/ && make test
+  - cd $TRAVIS_BUILD_DIR/tests/linker/ && make travis && make test

@@ -232,7 +232,9 @@ impl SymbolicLinker {
                                     let i = *e.get();
                                     if let symbol::SymbolSectionIndex::Section(_) = self.symtab[i].sym.shndx {
                                         if self.symtab[i].sym.bind != types::SymbolBind::WEAK {
-                                            if self.objects[&self.symtab[i].obj].name.contains("::") {
+                                            if true {
+                                            //if self.objects[&self.symtab[i].obj].name.contains("::") ||
+                                            //    String::from_utf8_lossy(&self.symtab[i].sym.name).contains("::") {
                                                 println!("conflicting definitions of {} \
                                                     ignored because for gnu compatibility. picking {}",
                                                     String::from_utf8_lossy(&self.symtab[i].sym.name),
