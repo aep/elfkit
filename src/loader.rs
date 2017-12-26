@@ -15,6 +15,7 @@ use self::rayon::prelude::*;
 use self::fnv::FnvHasher;
 use self::bit_vec::BitVec;
 use self::ar::Archive;
+use std::collections::hash_map::DefaultHasher;
 
 pub trait ReadSeekSend : Read + Seek + Send {}
 impl<T> ReadSeekSend for T where T: Read + Seek + Send{}
@@ -32,6 +33,7 @@ pub enum State {
         archive: Archive<File>,
     },
     Elf{
+        hash:    String,
         name:    String,
         elf:     Elf,
         read:    RefCell<Box<ReadSeekSend>>,
@@ -39,6 +41,7 @@ pub enum State {
         symbols: Vec<symbol::Symbol>,
     },
     Object{
+        hash:     String,
         name:     String,
         symbols:  Vec<symbol::Symbol>,
         header:   Header,
@@ -185,7 +188,7 @@ impl State {
                 }
                 r
             },
-            State::Elf{name, mut elf, read, symbols, ..} => {
+            State::Elf{name, hash, mut elf, read, symbols, ..} => {
                 if let Err(e) = elf.load_all(&mut *read.borrow_mut()) {
                     return vec![State::Error{
                         name:   name,
@@ -214,6 +217,7 @@ impl State {
                 }
 
                 vec![State::Object{
+                    hash:       hash,
                     name:       name,
                     symbols:    symbols,
                     header:     elf.header,
@@ -228,6 +232,7 @@ impl State {
 
         let mut elf = Elf::from_reader(&mut *io.borrow_mut())?;
 
+        let mut hasher = DefaultHasher::new();
         let mut num_symbols = 0;
 
         for i in 0..elf.sections.len() {
@@ -235,7 +240,11 @@ impl State {
                 types::SectionType::SYMTAB |
                     types::SectionType::DYNSYM => {
                         elf.load(i, &mut *io.borrow_mut())?;
-                        num_symbols += elf.sections[i].content.as_symbols().unwrap().len();
+                        let symbols = elf.sections[i].content.as_symbols().unwrap();
+                        for sym in symbols {
+                            hasher.write(&sym.name);
+                        }
+                        num_symbols += symbols.len();
                     },
                 _ => {}
             }
@@ -285,6 +294,7 @@ impl State {
         }
 
         Ok(State::Elf{
+            hash:    format!("{}>>{:x}!", name.split("::").last().unwrap(), hasher.finish()),
             name:    name,
             elf:     elf,
             read:    io,

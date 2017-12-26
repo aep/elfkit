@@ -4,6 +4,7 @@ use {Header, types, symbol, relocation, section, Error};
 use std;
 use std::io::Write;
 use std::collections::hash_map::{self, HashMap};
+use std::collections::HashSet;
 use loader::{self, Loader};
 use std::sync::atomic::{self, AtomicUsize};
 
@@ -17,6 +18,9 @@ pub struct LinkableSymbol {
 pub struct Object {
     /// the link layout global id, assigned by the symbolic linker
     pub lid:        LinkGlobalId,
+
+    /// loader hash of the original object
+    pub hash:       String,
 
     /// name of the object + section name
     pub name:       String,
@@ -42,6 +46,8 @@ pub struct SymbolicLinker {
 
     lookup:      HashMap<Vec<u8>, usize>,
     lid_counter: AtomicUsize,
+
+    objects_seen: HashSet<String>,
 }
 
 impl SymbolicLinker {
@@ -52,8 +58,10 @@ impl SymbolicLinker {
         });
         self.objects.reserve(loader.len());
         for ma in loader {
-            if let loader::State::Object{name, header, symbols, sections} = ma {
-                self.insert_object(name, header, symbols, sections)?;
+            if let loader::State::Object{name, hash, header, symbols, sections} = ma {
+                if self.objects_seen.insert(hash.clone()) {
+                    self.insert_object(name, hash, header, symbols, sections)?;
+                }
             }
         }
         Ok(())
@@ -77,8 +85,10 @@ impl SymbolicLinker {
 
             self.objects.reserve(matches.len());
             for ma in matches {
-                if let loader::State::Object{name, header, symbols, sections} = ma {
-                    self.insert_object(name, header, symbols, sections)?;
+                if let loader::State::Object{name, hash, header, symbols, sections} = ma {
+                    if self.objects_seen.insert(hash.clone()) {
+                        self.insert_object(name, hash, header, symbols, sections)?;
+                    }
                 }
             }
         }
@@ -113,7 +123,7 @@ impl SymbolicLinker {
         (state2, matches)
     }
 
-    fn insert_object(&mut self, name: String, header: Header, symbols: Vec<symbol::Symbol>,
+    fn insert_object(&mut self, name: String, hash:String, header: Header, symbols: Vec<symbol::Symbol>,
                      sections: Vec<(usize, section::Section, Vec<relocation::Relocation>)>)
         -> Result<(), Error>  {
 
@@ -123,8 +133,9 @@ impl SymbolicLinker {
 
         let locations = match self.link_locations(lid_base, symbols) {
             Ok(v) => v,
-            Err(Error::ConflictingSymbol{sym, con, ..}) => {
-                return Err(Error::ConflictingSymbol{sym, con, obj:name});
+            Err(Error::ConflictingSymbol{sym, obj1_name, obj1_hash, ..}) => {
+                return Err(Error::ConflictingSymbol{sym, obj1_name, obj2_name:name,
+                    obj1_hash, obj2_hash: hash});
             },
             Err(e) => return Err(e),
         };
@@ -141,6 +152,7 @@ impl SymbolicLinker {
             self.objects.insert(lid_base + sec_shndx as usize, Object {
                 oid:        lid_base,
                 lid:        lid_base + sec_shndx as usize,
+                hash:       hash.clone(),
                 name:       name.clone() + "("+ &String::from_utf8_lossy(&sec.name) + ")",
                 header:     header.clone(),
                 section:    sec,
@@ -157,6 +169,7 @@ impl SymbolicLinker {
         self.objects.insert(lid_base, Object {
             oid:        lid_base,
             lid:        lid_base,
+            hash:       hash.clone(),
             name:       name.clone(),
             header:     header.clone(),
             section:    section::Section::default(),
@@ -232,22 +245,14 @@ impl SymbolicLinker {
                                     let i = *e.get();
                                     if let symbol::SymbolSectionIndex::Section(_) = self.symtab[i].sym.shndx {
                                         if self.symtab[i].sym.bind != types::SymbolBind::WEAK {
-                                            if true {
-                                            //if self.objects[&self.symtab[i].obj].name.contains("::") ||
-                                            //    String::from_utf8_lossy(&self.symtab[i].sym.name).contains("::") {
-                                                println!("conflicting definitions of {} \
-                                                    ignored because for gnu compatibility. picking {}",
-                                                    String::from_utf8_lossy(&self.symtab[i].sym.name),
-                                                    self.objects[&self.symtab[i].obj].name.clone()
-                                                    );
-                                            } else {
-                                                return Err(Error::ConflictingSymbol{
-                                                    sym:   String::from_utf8_lossy(&self.symtab[i].sym.name)
-                                                        .into_owned(),
-                                                        obj:   String::default(),
-                                                        con:   self.objects[&self.symtab[i].obj].name.clone(),
-                                                });
-                                            }
+                                            return Err(Error::ConflictingSymbol{
+                                                sym:   String::from_utf8_lossy(&self.symtab[i].sym.name)
+                                                    .into_owned(),
+                                                    obj1_name:   self.objects[&self.symtab[i].obj].name.clone(),
+                                                    obj1_hash:   self.objects[&self.symtab[i].obj].hash.clone(),
+                                                    obj2_name:   String::default(),
+                                                    obj2_hash:   String::default(),
+                                            });
                                         }
                                     };
                                     self.symtab[i] = LinkableSymbol{sym: sym,

@@ -40,9 +40,11 @@ pub enum Error {
     NoSymbolsInObject,
     MultipleSymbolSections,
     ConflictingSymbol{
-        sym:   String,
-        obj:   String,
-        con:   String,
+        sym:        String,
+        obj1_name:  String,
+        obj2_name:  String,
+        obj1_hash:  String,
+        obj2_hash:  String,
     },
     UndefinedReference{
         sym:    String,

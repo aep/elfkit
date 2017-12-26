@@ -11,6 +11,7 @@ use std::collections::hash_map::{self,HashMap};
 use std::fs::OpenOptions;
 use std::os::unix::fs::PermissionsExt;
 use colored::*;
+use std::process;
 
 fn main() {
     let args = parse_ld_options();
@@ -28,6 +29,7 @@ fn main() {
         types::ElfType::DYN => {
             loader.push(loader::State::Object{
                 name:     String::from("___linker_entry"),
+                hash:     String::from("___linker_entry"),
                 symbols:  vec![symbol::Symbol{
                     stype: types::SymbolType::FUNC,
                     size:  0,
@@ -43,7 +45,18 @@ fn main() {
             });
 
             let mut linker = SymbolicLinker::default();
-            linker.link(loader).unwrap();
+
+            match linker.link(loader) {
+                Ok(_)   => {},
+                Err(Error::ConflictingSymbol{sym, obj1_name, obj1_hash, obj2_name, obj2_hash}) => {
+                    println!("{}", format!("conflicting symbol '{}'", sym).red());
+                    println!("{}", format!("   in {} [LHAS {}]", obj1_name, obj1_hash).red());
+                    println!("{}", format!("   in {} [LHAS {}]", obj2_name, obj2_hash).red());
+                    process::abort();
+                },
+                Err(e)  => panic!(e),
+            };
+
             println!("lookup complete: {} nodes in link tree", linker.objects.len());
             linker.gc();
             println!("  after gc: {}", linker.objects.len());
