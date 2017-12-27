@@ -114,8 +114,10 @@ fn main() {
 
     let lpaths = match matches.values_of("library-path") {
         None => {
-            parse_ld_so_conf(&(sysroot.clone() + "/etc/ld.so.conf")).unwrap_or(
-                vec![sysroot.clone() + "/lib", sysroot.clone() + "/usr/lib"])
+            match parse_ld_so_conf(&(sysroot.clone() + "/etc/ld.so.conf")) {
+                Ok(l) => l.into_iter().map(|l| sysroot.clone() + &l).collect(),
+                Err(_) => vec![sysroot.clone() + "/lib", sysroot.clone() + "/usr/lib"],
+            }
         },
         Some(vals) => {
             vals.map(|v|v.to_owned()).collect()
