@@ -10,6 +10,7 @@ fn main() {
 
     let rootsym = env::args().nth(1).unwrap().into_bytes();
     loader.push(loader::State::Object{
+        hash:     String::from("___linker_entry"),
         name:     String::from("___linker_entry"),
         symbols:  vec![symbol::Symbol{
             stype: types::SymbolType::FUNC,
