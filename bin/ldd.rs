@@ -1,9 +1,15 @@
+extern crate glob;
 extern crate clap;
 extern crate elfkit;
+
 use std::fs::{File};
 use elfkit::Elf;
 use std::path::Path;
 use std::collections::HashSet;
+use std::io::{self};
+use std::io::BufReader;
+use std::io::BufRead;
+use glob::glob;
 
 fn recursive_ldd(lpaths: &Vec<String>, path: &str, visited: &mut HashSet<String>) {
     let mut f = File::open(path).unwrap();
@@ -46,6 +52,35 @@ fn recursive_ldd(lpaths: &Vec<String>, path: &str, visited: &mut HashSet<String>
 
 }
 
+fn parse_ld_so_conf(path: &str) -> io::Result<Vec<String>> {
+    let mut paths = Vec::new();
+
+    let f = File::open(path)?;
+    let f = BufReader::new(&f);
+    for line in f.lines() {
+        let line = line?;
+        let line = line.trim();
+        if line.starts_with("#") {
+            continue;
+        }
+        if line == "" {
+            continue;
+        }
+
+        if line.contains(" ") {
+            if line.starts_with("include ") {
+                for entry in glob(line.split(" ").last().unwrap()).expect("Failed to read glob pattern") {
+                    paths.extend(parse_ld_so_conf(&entry.unwrap().to_string_lossy().into_owned())?);
+                }
+
+            }
+        } else {
+            paths.push(line.to_owned());
+        }
+    }
+    Ok(paths)
+}
+
 fn main() {
     let matches = clap::App::new("elfkit-ldd")
         .setting(clap::AppSettings::ArgRequiredElseHelp)
@@ -59,17 +94,29 @@ fn main() {
              .index(1)
             )
         .arg(clap::Arg::with_name("library-path")
+             .short("L")
+             .long("library-path")
              .takes_value(true)
              .multiple(true)
-             .help("lookup dependencies here instead of in /usr/lib,/lib")
-             .index(2)
+             .help("specify library lookup path, ignoring sysroot/etc/ld.so.conf")
+             )
+        .arg(clap::Arg::with_name("sysroot")
+             .short("R")
+             .long("sysroot")
+             .takes_value(true)
+             .help("specify sysroot to look up dependencies in, instead of /")
              )
         .get_matches();
 
 
 
+    let sysroot = matches.value_of("sysroot").unwrap_or("/").to_owned();
+
     let lpaths = match matches.values_of("library-path") {
-        None => vec![String::from("/lib"), String::from("/usr/lib")],
+        None => {
+            parse_ld_so_conf(&(sysroot.clone() + "/etc/ld.so.conf")).unwrap_or(
+                vec![sysroot.clone() + "/lib", sysroot.clone() + "/usr/lib"])
+        },
         Some(vals) => {
             vals.map(|v|v.to_owned()).collect()
         }
