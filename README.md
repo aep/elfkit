@@ -10,7 +10,7 @@ an elf read and manipulation library in pure rust (written from scratch, no bfd,
 intended to be used in binary manipulation utils such as strip, chrpath, objcopy and ld.
 The end goal is to build a well designed library that facilitates all sorts of binary manipulation magic.
 
-elfkit can now link elfkit, so it's reasonably complete for x86_64. But it's definatly not stable yet and might produce incorrect code.
+elfkit can now link elfkit, so it's reasonably complete for x86_64. But it's definitely not stable yet and might produce incorrect code.
 
 
 Using the linker
