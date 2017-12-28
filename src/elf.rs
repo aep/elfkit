@@ -1,3 +1,4 @@
+
 use header::Header;
 use types;
 use error::Error;
@@ -416,7 +417,7 @@ impl Elf {
 
         self.segments.clear();
 
-        //println!("\nstart of Elf::layout segmentation");
+        trace!("start of Elf::layout segmentation");
 
         let mut current_load_segment_flags = types::SegmentFlags::READABLE;
         let mut current_load_segment_poff = 0;
@@ -429,15 +430,15 @@ impl Elf {
 
         let mut dbg_old_addresses = vec![self.sections[0].header.addr];
 
-        //println!("   name     \tsize\tpoff\tvoff\tpstart\tvstart\tflags");
+        trace!("    name     \tsize\tpoff\tvoff\tpstart\tvstart\tflags");
         for (shndx, sec)  in self.sections.iter_mut().enumerate().skip(1) {
             dbg_old_addresses.push(sec.header.addr);
 
-            //println!(" > {:<10.10}\t{}\t{}\t{}\t{}\t{}\t{:?}", 
-            //         String::from_utf8_lossy(&sec.name), sec.header.size, poff, voff, 
-            //         current_load_segment_pstart,
-            //         current_load_segment_vstart,
-            //         current_load_segment_flags);
+            trace!(" > {:<10.10}\t{}\t{}\t{}\t{}\t{}\t{:?}", 
+                     String::from_utf8_lossy(&sec.name), sec.header.size, poff, voff, 
+                     current_load_segment_pstart,
+                     current_load_segment_vstart,
+                     current_load_segment_flags);
 
             if sec.header.addralign > 0 {
                 let oa = poff % sec.header.addralign;
@@ -445,15 +446,16 @@ impl Elf {
                     poff += sec.header.addralign - oa;
                     voff += sec.header.addralign - oa;
                 }
+                trace!("   ^ realigned for {} to voff 0x{:x}", sec.header.addralign, voff);
             }
 
             if sec.header.shtype != types::SectionType::NOBITS {
                 if poff > voff {
-                    panic!("selfkit: relayout: poff>voff 0x{:x}>0x{:x} in {}.", poff, voff,
+                    panic!("elfkit: relayout: poff>voff 0x{:x}>0x{:x} in {}.", poff, voff,
                            String::from_utf8_lossy(&sec.name));
                 }
                 if (voff - poff) % 0x200000 != 0 {
-                    //println!("   ^ causes segmentation by load alignment");
+                    trace!("   ^ causes segmentation by load alignment");
                     if sec.header.flags.contains(types::SectionFlags::EXECINSTR) {
                         current_load_segment_flags.insert(types::SegmentFlags::EXECUTABLE);
                     }
@@ -506,9 +508,9 @@ impl Elf {
                         current_load_segment_vstart = voff;
                         current_load_segment_flags = types::SegmentFlags::READABLE;
                     } else {
-                        //println!("   ^ segmentation protection change supressed because it would be empty \
-                        //         voff {} <= vstart {}",
-                        //         current_load_segment_voff, current_load_segment_vstart);
+                        trace!("   ^ segmentation protection change supressed because it would be empty \
+                                 voff {} <= vstart {}",
+                                 current_load_segment_voff, current_load_segment_vstart);
                     }
 
                     if sec.header.flags.contains(types::SectionFlags::WRITE) {
@@ -525,6 +527,7 @@ impl Elf {
 
             sec.header.addr = voff;
             voff += sec.header.size;
+            trace!("   = final addr 0x{:x}", sec.header.addr);
 
             if sec.header.flags.contains(types::SectionFlags::ALLOC) {
                 current_load_segment_poff = poff;
@@ -574,7 +577,7 @@ impl Elf {
             }
         }
         if current_load_segment_voff >  current_load_segment_vstart {
-            //println!("   > segmentation caused by end of sections");
+            trace!("   > segmentation caused by end of sections");
             self.segments.push(segment::SegmentHeader {
                 phtype: types::SegmentType::LOAD,
                 flags:  current_load_segment_flags,
@@ -593,12 +596,23 @@ impl Elf {
         self.header.phoff     = self.header.size() as u64;
 
         self.header.ehsize    = self.header.size() as u16;
-        let hoff = (self.header.phnum as u64 * self.header.phentsize as u64) + self.header.ehsize as u64;
+        let mut hoff = (self.header.phnum as u64 * self.header.phentsize as u64) + self.header.ehsize as u64;
 
+        ///TODO this is shitty, because we need to replicate all the alignment code
+        ///also most of those sections dont actually need to be moved
+        for sec in &mut self.sections[1..] {
+            if sec.header.addralign > 0 {
+                let oa = hoff % sec.header.addralign;
+                if oa != 0 {
+                    hoff += sec.header.addralign - oa;
+                }
+            }
+        }
         for sec in &mut self.sections[1..] {
             sec.header.offset += hoff;
             sec.header.addr   += hoff;
         }
+
 
         let mut seen_first_load = false;
         for seg in self.segments.iter_mut() {
@@ -624,7 +638,7 @@ impl Elf {
             align:  0x8,
         });
 
-        //println!("done {} segments", self.segments.len());
+        trace!("done {} segments", self.segments.len());
 
         for i in 0..self.sections.len() {
             if self.sections[i].addrlock && self.sections[i].header.addr != dbg_old_addresses[i] {

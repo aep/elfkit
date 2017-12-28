@@ -105,6 +105,7 @@ fn main() {
     let mut perms = out_file.metadata().unwrap().permissions();
     perms.set_mode(0o755);
     out_file.set_permissions(perms).unwrap();
+
 }
 
 
@@ -770,6 +771,9 @@ impl SimpleCollector {
         }
         if name.len() > 5 && &name[0..6] == b".tdata" {
             name = b".tdata".to_vec();
+        }
+        if name.len() > 6 && &name[0..7] == b".debug_" {
+            name = b".dbgFIXME".to_vec();
         }
 
         sec.header.flags.remove(types::SectionFlags::GROUP);

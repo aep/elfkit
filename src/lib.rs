@@ -1,13 +1,11 @@
-#[macro_use]
-extern crate bitflags;
+#[macro_use] extern crate bitflags;
 extern crate byteorder;
-#[macro_use]
-extern crate enum_primitive_derive;
+#[macro_use] extern crate enum_primitive_derive;
 extern crate num_traits;
 extern crate ordermap;
-#[macro_use]
-pub mod utils;
+#[macro_use] extern crate log;
 
+#[macro_use] pub mod utils;
 pub mod dynamic;
 pub mod elf;
 pub mod error;
