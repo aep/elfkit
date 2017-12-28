@@ -29,6 +29,45 @@ cargo run --bin readelf /bin/sh | less
 ![screenshot](/bin/readelf-screenshot.png?raw=true)
 
 
+implementation status
+---------------------
+
+binutils
+
+| type         | status    | gnu compatible |
+|--------------|-----------|----------------|
+| ldd          | done      | no             |
+| readelf      | done      | no             |
+| ld           | wip       | wip            |
+| objdump      | -         | -              |
+| ar           | -         | -              |
+| as           | -         | -              |
+| nm           | -         | -              |
+| strip        | -         | -              |
+
+section parsers
+
+| type         | read    | write   |
+|--------------|---------|---------|
+| symbols      | done    | done    |
+| strtab       | done    | done    |
+| relocations  | done    | done    |
+| dynamic      | done    | done    |
+| note         | -       | -       |
+| gnu_hash     | -       | -       |
+| hash         | -       | mvp     |
+| versym       | -       | -       |
+| verneed      | -       | -       |
+
+architectures
+
+| abi          | parser  | linker |
+|--------------|---------|--------|
+| x86_64       | done    | wip    |
+| mips32r2 o32 | done    |        |
+| arm eabi     | done    |        |
+
+
 modular linker toolkit
 ---------------------
 
@@ -36,33 +75,6 @@ modular linker toolkit
 - Linker:       produces a link graph of sections from a loader
 - Collector:    bakes multiple sections into a single object
 - Relocator:    applies relocations to a combined object
-
-
-implementation status
----------------------
-
-section specific parsers
-
-| type         | read    | write   |
-|--------------|---------|---------|
-| symbols      | ok      | ok      |
-| strtab       | ok      | ok      |
-| relocations  | ok      | ok      |
-| dynamic      | ok      | ok      |
-| note         | -       | -       |
-| gnu_hash     | -       | -       |
-| hash         | -       | faked   |
-| versym       | -       | -       |
-| verneed      | -       | -       |
-
-architectures
-
-| abi          | headers | linker |
-|--------------|---------|--------|
-| x86_64       | ok      | ok     |
-| mips32r2 o32 | ok      |        |
-| arm eabi     | ok      |        |
-
 
 alternatives
 ----------------
