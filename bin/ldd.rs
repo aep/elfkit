@@ -11,45 +11,78 @@ use std::io::BufReader;
 use std::io::BufRead;
 use glob::glob;
 
-fn recursive_ldd(lpaths: &Vec<String>, path: &str, visited: &mut HashSet<String>) {
-    let mut f = File::open(path).unwrap();
-    let mut elf = Elf::from_reader(&mut f).unwrap();
+struct Ldd {
+    sysroot:    String,
+    lpaths:     Vec<String>,
+    visited:    HashSet<String>,
+}
 
-    let mut deps = Vec::new();
-    for shndx in 0..elf.sections.len() {
-        if elf.sections[shndx].header.shtype == elfkit::types::SectionType::DYNAMIC {
-            elf.load(shndx, &mut f).unwrap();
-            let dynamic = elf.sections[shndx].content.as_dynamic().unwrap();
-            for dyn in dynamic.iter() {
-                if dyn.dhtype == elfkit::types::DynamicType::NEEDED {
-                    if let elfkit::dynamic::DynamicContent::String(ref name) = dyn.content {
-                        deps.push(String::from_utf8_lossy(&name.0).into_owned());
+fn join_paths(a: &str, b: &str) -> String {
+    if b.len() < 1 {
+        return String::from(a);
+    }
+    let mut a = String::from(a);
+    if a.len() < 1 {
+        return a;
+    }
+    if a.chars().last().unwrap() != '/' {
+        a.push('/');
+    }
+
+    if b.chars().nth(0).unwrap() == '/' {
+        return a + &b[1..];
+    }
+    return a + b;
+}
+
+impl Ldd {
+    fn recurse(&mut self, path: &str) {
+        let mut f = File::open(path).unwrap();
+        let mut elf = Elf::from_reader(&mut f).unwrap();
+
+        let mut deps = Vec::new();
+        for shndx in 0..elf.sections.len() {
+            if elf.sections[shndx].header.shtype == elfkit::types::SectionType::DYNAMIC {
+                elf.load(shndx, &mut f).unwrap();
+                let dynamic = elf.sections[shndx].content.as_dynamic().unwrap();
+
+                for dyn in dynamic.iter() {
+                    if dyn.dhtype == elfkit::types::DynamicType::RPATH{
+                        if let elfkit::dynamic::DynamicContent::String(ref name) = dyn.content {
+                            self.lpaths.push(join_paths(
+                                    &self.sysroot, &String::from_utf8_lossy(&name.0).into_owned()))
+                        }
+                    }
+                    if dyn.dhtype == elfkit::types::DynamicType::NEEDED {
+                        if let elfkit::dynamic::DynamicContent::String(ref name) = dyn.content {
+                            deps.push(String::from_utf8_lossy(&name.0).into_owned());
+                        }
                     }
                 }
             }
         }
-    }
 
-    for dep in &mut deps {
-        let mut found = false;
-        for lpath in lpaths.iter().map(|p| Path::new(p)) {
-            let joined = lpath.join(&dep);
-            if joined.exists() {
-                *dep = joined.to_string_lossy().into_owned();
-                found = true;
-                break;
+        for dep in &mut deps {
+            let mut found = false;
+            for lpath in self.lpaths.iter() {
+                let joined = join_paths(&lpath, &dep);
+                let joined = Path::new(&joined);
+                if joined.exists() {
+                    *dep = joined.to_string_lossy().into_owned();
+                    found = true;
+                    break;
+                }
+            }
+            if found {
+                if self.visited.insert(dep.clone()) {
+                    println!("{}", dep);
+                    self.recurse(dep);
+                }
+            } else {
+                panic!("unable to find dependcy {} in {:?}", dep, self.lpaths);
             }
         }
-        if found {
-            if visited.insert(dep.clone()) {
-                println!("{}", dep);
-                recursive_ldd(lpaths, dep, visited);
-            }
-        } else {
-            panic!("unable to find dependcy {} in {:?}", dep, lpaths);
-        }
     }
-
 }
 
 fn parse_ld_so_conf(path: &str) -> io::Result<Vec<String>> {
@@ -98,7 +131,7 @@ fn main() {
              .long("library-path")
              .takes_value(true)
              .multiple(true)
-             .help("specify library lookup path, ignoring sysroot/etc/ld.so.conf")
+             .help("library lookup path, ignores $SYSROOT/etc/ld.so.conf")
              )
         .arg(clap::Arg::with_name("sysroot")
              .short("R")
@@ -115,8 +148,8 @@ fn main() {
     let lpaths = match matches.values_of("library-path") {
         None => {
             match parse_ld_so_conf(&(sysroot.clone() + "/etc/ld.so.conf")) {
-                Ok(l) => l.into_iter().map(|l| sysroot.clone() + &l).collect(),
-                Err(_) => vec![sysroot.clone() + "/lib", sysroot.clone() + "/usr/lib"],
+                Ok(l) => l.into_iter().map(|l| join_paths(&sysroot, &l)).collect(),
+                Err(_) => vec![join_paths(&sysroot, "/lib"), join_paths(&sysroot, "/usr/lib")],
             }
         },
         Some(vals) => {
@@ -124,9 +157,15 @@ fn main() {
         }
     };
 
+
+    let mut ldd = Ldd{
+        sysroot:    sysroot,
+        lpaths:     lpaths,
+        visited:    HashSet::new(),
+    };
+
     let path  = matches.value_of("file").unwrap();
-    let mut visited = HashSet::new();
-    recursive_ldd(&lpaths, &path, &mut visited);
+    ldd.recurse(&path);
 }
 
 

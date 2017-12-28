@@ -61,7 +61,16 @@ impl Dynamic {
                         content: DynamicContent::None,
                     });
                     break;
-                }
+                },
+                Some(types::DynamicType::RPATH) => {
+                    r.push(Dynamic {
+                        dhtype: types::DynamicType::RPATH,
+                        content: DynamicContent::String(match strtab {
+                            None => (Vec::default(),None),
+                            Some(s) => (s.get(val as usize), Some(val)),
+                        }),
+                    });
+                },
                 Some(types::DynamicType::NEEDED) => {
                     r.push(Dynamic {
                         dhtype: types::DynamicType::NEEDED,
@@ -70,7 +79,7 @@ impl Dynamic {
                             Some(s) => (s.get(val as usize), Some(val)),
                         }),
                     });
-                }
+                },
                 Some(types::DynamicType::FLAGS_1) => {
                     r.push(Dynamic {
                         dhtype: types::DynamicType::FLAGS_1,
@@ -81,7 +90,7 @@ impl Dynamic {
                             },
                         ),
                     });
-                }
+                },
                 Some(x) => {
                     r.push(Dynamic {
                         dhtype: x,
