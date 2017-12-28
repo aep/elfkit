@@ -1,7 +1,8 @@
+#[macro_use] extern crate log;
 #[macro_use] extern crate elfkit;
 extern crate ordermap;
-extern crate colored;
 extern crate byteorder;
+extern crate env_logger;
 
 use std::env;
 use elfkit::{Elf, Header, types, symbol, relocation, section, Error, loader, dynamic};
@@ -10,10 +11,15 @@ use self::ordermap::{OrderMap};
 use std::collections::hash_map::{self,HashMap};
 use std::fs::OpenOptions;
 use std::os::unix::fs::PermissionsExt;
-use colored::*;
 use std::process;
 
 fn main() {
+    if let Err(_) = env::var("RUST_LOG") {
+        env::set_var("RUST_LOG", "debug");
+    }
+    env_logger::init();
+
+
     let args = parse_ld_options();
     let mut loader: Vec<loader::State> = args.object_paths.into_iter().map(|s|{
         loader::State::Path{name:s}}).collect();
@@ -49,17 +55,16 @@ fn main() {
             match linker.link(loader) {
                 Ok(_)   => {},
                 Err(Error::ConflictingSymbol{sym, obj1_name, obj1_hash, obj2_name, obj2_hash}) => {
-                    println!("{}", format!("conflicting symbol '{}'", sym).red());
-                    println!("{}", format!("   in {} [LHAS {}]", obj1_name, obj1_hash).red());
-                    println!("{}", format!("   in {} [LHAS {}]", obj2_name, obj2_hash).red());
+                    error!("conflicting symbol '{}'\n       in {} [LHAS {}]\n       in {} [LHAS {}]",
+                           sym, obj1_name, obj1_hash, obj2_name, obj2_hash);
                     process::abort();
                 },
                 Err(e)  => panic!(e),
             };
 
-            println!("lookup complete: {} nodes in link tree", linker.objects.len());
+            info!("lookup complete: {} nodes in link tree", linker.objects.len());
             linker.gc();
-            println!("  after gc: {}", linker.objects.len());
+            info!("  after gc: {}", linker.objects.len());
 
             elf.sections.push(section::Section::default());
             let mut dl = args.dynamic_linker.into_bytes();
@@ -80,7 +85,7 @@ fn main() {
         types::ElfType::REL => {
             let mut linker = SymbolicLinker::default();
             linker.link_all(loader).unwrap();
-            println!("lookup complete: {} nodes in link tree", linker.objects.len());
+            info!("lookup complete: {} nodes in link tree", linker.objects.len());
             elf.sections.push(section::Section::default());
             let mut collected = SimpleCollector::new(elf).collect(linker).into_collected();
             DynamicRelocator::relocate(&mut collected).unwrap();
@@ -150,8 +155,6 @@ impl DynamicRelocator {
 
                 match reloc.rtype {
                     relocation::RelocationType::R_X86_64_64 => {
-                        //TODO: if sym is zero, we really should not emit a RELATIVE reloc. it wont
-                        //be zero
                         reloc.rtype   = relocation::RelocationType::R_X86_64_RELATIVE;
                         dynrel.push(reloc);
                         dynrel_addr.push(shndx);
@@ -180,13 +183,19 @@ impl DynamicRelocator {
                                     vis:    types::SymbolVis::DEFAULT,
                                     _name:  0,
                                 });
-                                dynrel.push(relocation::Relocation{
-                                    addr:   got_slot as u64,
-                                    sym:    reloc.sym,
-                                    rtype:  relocation::RelocationType::R_X86_64_RELATIVE,
-                                    addend: 0,
-                                });
-                                dynrel_addr.push(shndx_got);
+
+                                if let symbol::SymbolSectionIndex::Undefined = sym.shndx {
+                                    warn!("{:?} to undefined symbol {} will be relocated to zeroed out GOT",
+                                          reloc.rtype, String::from_utf8_lossy(&sym.name));
+                                } else {
+                                    dynrel.push(relocation::Relocation{
+                                        addr:   got_slot as u64,
+                                        sym:    reloc.sym,
+                                        rtype:  relocation::RelocationType::R_X86_64_RELATIVE,
+                                        addend: 0,
+                                    });
+                                    dynrel_addr.push(shndx_got);
+                                }
 
                                 e.insert(got_sym);
                                 got_sym
@@ -198,7 +207,7 @@ impl DynamicRelocator {
                         hrel.push((shndx, reloc));
                     },
                     relocation::RelocationType::R_X86_64_32 | relocation::RelocationType::R_X86_64_32S => {
-                        println!("unsupported relocation. maybe missing -fPIC ? {:?} -> {:?}", reloc, sym);
+                        panic!("unsupported relocation. maybe missing -fPIC ? {:?} -> {:?}", reloc, sym);
                     },
 
                     relocation::RelocationType::R_X86_64_GOTTPOFF |
@@ -443,6 +452,9 @@ impl DynamicRelocator {
             rel.addend  += collected.symtab[rel.sym as usize].value as i64;
             rel.sym     =  0;
             rel.addr    += collected.elf.sections[shndx].header.addr;
+            if rel.addend == 0 {
+                error!("BUG emitting R_X86_64_RELATIVE with addend == 0 wont work.");
+            }
         }
         collected.elf.sections[shndx_reladyn].content = section::SectionContent::Relocations(reladyn);
 
@@ -460,7 +472,8 @@ impl DynamicRelocator {
                     let rv = ((sym.value as i64) + (reloc.addend as i64) - (vaddr as i64)) as i32;
 
                     if sym.value == 0 {
-                        println!("warning: relative reloc to undefined symbol {:?} -> {:?}",  reloc, sym);
+                        warn!("{:?} to undefined symbol  {}",  reloc.rtype,
+                              String::from_utf8_lossy(&sym.name));
                     }
 
                     let w = match collected.elf.sections[shndx].content.as_raw_mut() {
@@ -489,7 +502,6 @@ impl DynamicRelocator {
                     };
                     let value = sym.value as i64 + reloc.addend;
                     let mut w = &mut w[reloc.addr as usize ..];
-                    println!("writing {:x} to {:x}", value, reloc.addr);
                     elf_write_u32!(&collected.elf.header, w, value as u32)?;
                 },
                 _ => unreachable!(),
@@ -801,8 +813,9 @@ impl SimpleCollector {
         for mut rel in rela {
             match rel.rtype {
                 relocation::RelocationType::R_X86_64_32 | relocation::RelocationType::R_X86_64_32S => {
-                    println!("unsupported relocation. maybe missing -fPIC ? {:?} in {}", 
+                    error!("unsupported relocation. maybe missing -fPIC ? {:?} in {}",
                            rel, objname);
+                    process::abort();
                 },
                 _ => {},
             };
@@ -872,7 +885,7 @@ pub fn parse_ld_options() -> LdOptions{
     let mut options         = LdOptions::default();
     let mut search_paths    = Vec::new();
 
-    println!("arguments to ld.elfkit: {:?}", env::args());
+    debug!("arguments to ld.elfkit: {:?}", env::args());
 
     let mut argc = 1;
     loop {
@@ -901,20 +914,20 @@ pub fn parse_ld_options() -> LdOptions{
             argc += 1;
             options.dynamic_linker = env::args().nth(argc).unwrap()
         } else if let Some(val) = ldarg(&arg, "-z", &mut argc) {
-            println!("{}", format!("argument ignored: -z {}" ,val).yellow());
+            warn!("argument ignored: -z {}" ,val);
 
         } else if arg == "-plugin" {
             argc += 1;
-            println!("{}", format!("argument ignored: -plugin {}" , env::args().nth(argc).unwrap()).yellow());
+            warn!("argument ignored: -plugin {}" , env::args().nth(argc).unwrap());
         } else if arg.starts_with("-") {
-            println!("{}", format!("argument ignored: {}",arg).yellow());
+            warn!("argument ignored: {}",arg);
         } else {
             options.object_paths.push(arg);
         }
         argc +=1;
     }
 
-    println!("linking {:?}", options.object_paths);
+    info!("linking {:?}", options.object_paths);
 
     options
 }
