@@ -2,6 +2,8 @@
 [![crates.io](http://meritbadge.herokuapp.com/elfkit)](https://crates.io/crates/elfkit)
 [![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE-MIT)
 [![docs](https://docs.rs/elfkit/badge.svg)](https://docs.rs/elfkit)
+[![donate bitcoin](https://img.shields.io/badge/donate-bitcoin-yellow.svg)](http://aep.github.io/donate.html)
+
 
 Elfkit
 =========
