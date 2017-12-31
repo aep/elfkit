@@ -97,7 +97,7 @@ impl State {
                     Err(_) => return true,
                 };
                 for symbol in symbols {
-                    if symbol.as_bytes() == needle {
+                    if symbol == needle {
                         return true;
                     }
                 }
@@ -174,7 +174,9 @@ impl State {
                 while let Some(entry) = archive.next_entry() {
                     let mut name = name.clone();
                     match &entry {
-                        &Ok(ref entry) => name += &(String::from("::") + &entry.header().identifier()),
+                        &Ok(ref entry) => name +=
+                            &(String::from("::") +
+                              &String::from_utf8_lossy(&entry.header().identifier())),
                         _ => {},
                     };
 
