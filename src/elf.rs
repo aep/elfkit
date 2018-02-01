@@ -213,8 +213,13 @@ impl Elf {
 
         //section headers
         if self.header.shstrndx > 0 {
-            let off = io.seek(SeekFrom::End(0))? as usize;
-            self.header.shoff = off as u64;
+            self.header.shoff = io.seek(SeekFrom::End(0))?;
+            let alignment = if self.header.ident_class == types::Class::Class64 { 8 } else { 4 };
+            let oa = self.header.shoff % alignment;
+            if oa != 0 {
+                self.header.shoff += alignment - oa;
+                io.seek(SeekFrom::Start(self.header.shoff))?;
+            }
             for sec in &headers {
                 sec.to_writer(&self.header, &mut io)?;
             }
