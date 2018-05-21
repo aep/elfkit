@@ -7,7 +7,7 @@
 Elfkit
 =========
 
-an elf read and manipulation library in pure rust (written from scratch, no bfd, no gnu code, no license infections),
+An elf read and manipulation library in pure Rust (written from scratch, no bfd, no gnu code, no license infections),
 intended to be used in binary manipulation utils such as strip, chrpath, objcopy and ld.
 The end goal is to build a well designed library that facilitates all sorts of binary manipulation magic.
 
@@ -17,20 +17,20 @@ elfkit can now link elfkit, so it's reasonably complete for x86_64. But it's def
 Using the linker
 ---------------------
 
-The quickest way to use elfkit with rust is with [korhal/stasis](https://github.com/korhalio/stasis).
+The quickest way to use elfkit with Rust is with [korhal/stasis](https://github.com/korhalio/stasis).
 
 You can also either build from source or download binaries.
-Gcc does not have an option to use a foreign linker, so we need to pretend we're ld.gold, like so:
+GCC does not have an option to use a foreign linker, so we need to pretend we're ld.gold, like so:
 
-```
+```sh
 curl -L https://github.com/aep/elfkit/releases/download/0.0.4/elfkit-0.0.4.tar.xz | tar xvjf -
 export PATH="$PWD/elfkit-0.0.4/:$PATH"
 musl-gcc -fuse-ld=gold main.c
 ```
 
-for using elfkit for compiling rust code, add the following to ~/.cargo/config:
+For using elfkit for compiling Rust code, add the following to `~/.cargo/config`:
 
-```
+```toml
 [target.x86_64-unknown-linux-musl]
 rustflags = [
     "-C", "link-arg=-fuse-ld=gold",
@@ -38,14 +38,15 @@ rustflags = [
 ]
 ```
 
-when compiling from source, create the ld.gold symlink manually.
-```
+When compiling from source, create the ld.gold symlink manually:
+
+```sh
 cargo build --release --bin ld
-ln -s $PWD/target/release/ld /usr/local/bin/ld.gold
+ln -s "$PWD/target/release/ld" /usr/local/bin/ld.gold
 ```
 
 
-other binutils
+Other binutils
 ---------------------
 
 readelf:
