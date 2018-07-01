@@ -1,6 +1,6 @@
 [package]
 name = "elfkit"
-version = "0.0.4"
+version = "0.0.5"
 authors = ["Arvid E. Picciani <aep@exys.org>"]
 repository = "https://github.com/aep/elfkit"
 homepage   = "https://github.com/aep/elfkit"
@@ -23,13 +23,11 @@ bloom = "0.3.2"
 fnv = "1.0.5"
 ordermap = "0.3.0"
 log = "0.4"
-env_logger = {git = "https://github.com/sebasmagri/env_logger.git"}
+env_logger = "0.5.10"
 pretty_env_logger = "0.1.1"
 clap = "2.28.0"
 glob = "0.2.11"
-
-#ar = "0.3.1"
-ar = {git = "https://github.com/mdsteele/rust-ar.git"}
+ar = "0.6.0"
 
 
 ## bin dependencies
@@ -53,3 +51,4 @@ path="bin/ld.rs"
 [[bin]]
 name="ldd"
 path="bin/ldd.rs"
+
