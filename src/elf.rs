@@ -8,7 +8,7 @@ use symbol;
 use section;
 use segment;
 
-use ordermap::{OrderMap};
+use indexmap::{IndexMap};
 use std::collections::hash_map::{HashMap};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std;
@@ -313,8 +313,8 @@ impl Elf {
         //original_size += 1;
 
 
-        let symtab_remap : OrderMap<usize, symbol::Symbol>
-            = OrderMap::from_iter(symtab_ls.into_iter().chain(symtab_gs.into_iter()));
+        let symtab_remap : IndexMap<usize, symbol::Symbol>
+            = IndexMap::from_iter(symtab_ls.into_iter().chain(symtab_gs.into_iter()));
 
         for sec in &mut self.sections {
             match sec.header.shtype {
@@ -439,8 +439,8 @@ impl Elf {
         for (shndx, sec)  in self.sections.iter_mut().enumerate().skip(1) {
             dbg_old_addresses.push(sec.header.addr);
 
-            trace!(" > {:<10.10}\t{}\t{}\t{}\t{}\t{}\t{:?}", 
-                     String::from_utf8_lossy(&sec.name), sec.header.size, poff, voff, 
+            trace!(" > {:<10.10}\t{}\t{}\t{}\t{}\t{}\t{:?}",
+                     String::from_utf8_lossy(&sec.name), sec.header.size, poff, voff,
                      current_load_segment_pstart,
                      current_load_segment_vstart,
                      current_load_segment_flags);
@@ -675,7 +675,7 @@ impl Elf {
 
 
 
-  
+
 
     //TODO this code isnt tested at all
     //TODO the warnings need to be emited when calling store_all instead

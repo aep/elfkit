@@ -1,13 +1,13 @@
 #[macro_use] extern crate log;
 #[macro_use] extern crate elfkit;
-extern crate ordermap;
+extern crate indexmap;
 extern crate byteorder;
 extern crate env_logger;
 
 use std::env;
 use elfkit::{Elf, Header, types, symbol, relocation, section, Error, loader, dynamic};
 use elfkit::symbolic_linker::{SymbolicLinker};
-use self::ordermap::{OrderMap};
+use self::indexmap::{IndexMap};
 use std::collections::hash_map::{self,HashMap};
 use std::fs::OpenOptions;
 use std::os::unix::fs::PermissionsExt;
@@ -676,7 +676,7 @@ pub trait Collector {
 /// a dummy implementation of Collector which works for testing
 pub struct SimpleCollector {
     pub collected:  Collected,
-    sections: OrderMap<Vec<u8>, section::Section>,
+    sections: IndexMap<Vec<u8>, section::Section>,
 }
 
 impl Collector for SimpleCollector {
@@ -694,7 +694,7 @@ impl SimpleCollector {
 
     pub fn new(mut elf: Elf) -> SimpleCollector {
 
-        let mut sections = OrderMap::new();
+        let mut sections = IndexMap::new();
         if elf.sections.len() < 1 {
             sections.insert(Vec::new(), section::Section::default());
         } else {
@@ -779,7 +779,7 @@ impl SimpleCollector {
         sec.header.flags.remove(types::SectionFlags::GROUP);
 
         let (nu_shndx, nu_off) = match self.sections.entry(name.clone()) {
-            ordermap::Entry::Occupied(mut e) => {
+            indexmap::map::Entry::Occupied(mut e) => {
                 let i  = e.index();
                 let ov = match sec.content {
                     section::SectionContent::Raw(mut r) => {
@@ -804,7 +804,7 @@ impl SimpleCollector {
                 };
                 (i, ov)
             },
-            ordermap::Entry::Vacant(e) => {
+            indexmap::map::Entry::Vacant(e) => {
                 let i = e.index();
                 sec.name = name.clone();
                 sec.addrlock = false;
@@ -935,5 +935,3 @@ pub fn parse_ld_options() -> LdOptions{
 
     options
 }
-
-
