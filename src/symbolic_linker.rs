@@ -1,4 +1,4 @@
-extern crate ordermap;
+extern crate indexmap;
 
 use {Header, types, symbol, relocation, section, Error};
 use std;
