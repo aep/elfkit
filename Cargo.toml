@@ -1,6 +1,6 @@
 [package]
 name = "elfkit"
-version = "0.0.5"
+version = "0.0.6"
 authors = ["Arvid E. Picciani <aep@exys.org>"]
 repository = "https://github.com/aep/elfkit"
 homepage   = "https://github.com/aep/elfkit"
