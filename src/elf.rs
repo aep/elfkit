@@ -701,7 +701,7 @@ impl Elf {
             }
         }
 
-        Ok((r))
+        Ok(r)
     }
     pub fn insert_section(&mut self, at: usize, sec: Section) -> Result<(), Error> {
         self.sections.insert(at, sec);

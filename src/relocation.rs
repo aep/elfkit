@@ -188,6 +188,6 @@ impl Relocation {
 
         elf_write_u64!(eh, io, self.addend as u64)?;
 
-        Ok((8+8+8))
+        Ok(8+8+8)
     }
 }
