@@ -3,6 +3,13 @@
 [![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE-MIT)
 [![docs](https://docs.rs/elfkit/badge.svg)](https://docs.rs/elfkit)
 
+DED
+=========
+
+please note that i no longer work with rust and this is not maintained.
+If anyone has interest in maintaining this crate, feel free to open a github issue.
+
+
 
 Elfkit
 =========
